@@ -152,7 +152,7 @@ if __name__ == "__main__":
     # Chemins relatifs à src/, cohérents avec la structure du projet :
     #   voice_driver_id/dataset/, /test_samples/, /models/, /src/
     DATASET_DIR = "../dataset"                     # un sous-dossier par conducteur
-    TEST_FILE = "../test_samples/test_he.wav"  # échantillon à identifier
+    TEST_FILE = "../test_samples/test_me.wav"  # échantillon à identifier
     MODEL_SAVE_PATH = "../models/speaker_models.pkl"   # où sauvegarder le modèle entraîné
 
     print("=== Entraînement des modèles GMM ===")

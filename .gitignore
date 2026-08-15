@@ -1,0 +1,34 @@
+# Environnement virtuel Python (recréé via ./setup.sh, ne doit jamais être commité)
+venv/
+env/
+.venv/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Modèle pré-entraîné téléchargé (plusieurs centaines de Mo, régénéré automatiquement
+# au premier lancement des scripts ECAPA-TDNN)
+pretrained_ecapa/
+
+# Données audio et modèles entraînés/enrôlés — spécifiques à chaque machine/utilisateur,
+# ne doivent pas être partagés publiquement sur le repo (vie privée + poids des fichiers)
+dataset/
+test_samples/
+models/*.pkl
+
+# Fichiers audio bruts, au cas où ils traînent ailleurs dans le repo
+*.wav
+*.mp3
+*.m4a
+*.flac
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Environnements / IDE
+.vscode/
+.idea/
+DriverCustomizationThroughVoiceIdentification.code-workspace
