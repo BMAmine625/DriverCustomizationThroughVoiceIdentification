@@ -28,7 +28,7 @@ import os
 import pickle
 import argparse
 
-from common import load_model, get_embedding, cosine_similarity
+from common import load_model, get_embedding, get_embedding_from_array, cosine_similarity
 
 
 # Seuil d'acceptation normal : en dessous, on rejette comme "INCONNU"
@@ -53,14 +53,8 @@ def save_enrolled(speaker_embeddings, path):
         pickle.dump(speaker_embeddings, f)
 
 
-def identify(classifier, audio_path, enrolled_speakers):
-    """
-    Retourne (speaker_name, best_score, all_scores, embedding).
-    On retourne aussi l'embedding pour pouvoir l'utiliser dans
-    l'adaptation sans le recalculer.
-    """
-    embedding = get_embedding(classifier, audio_path)
-
+def _score_and_decide(embedding, enrolled_speakers):
+    """Logique de scoring partagée entre identify() (fichier) et identify_array() (streaming)."""
     scores = {
         name: cosine_similarity(embedding, ref_emb)
         for name, ref_emb in enrolled_speakers.items()
@@ -70,9 +64,31 @@ def identify(classifier, audio_path, enrolled_speakers):
     best_score = scores[best_speaker]
 
     if best_score < ACCEPT_THRESHOLD:
-        return "INCONNU", best_score, scores, embedding
+        return "INCONNU", best_score, scores
 
-    return best_speaker, best_score, scores, embedding
+    return best_speaker, best_score, scores
+
+
+def identify(classifier, audio_path, enrolled_speakers):
+    """
+    Retourne (speaker_name, best_score, all_scores, embedding).
+    On retourne aussi l'embedding pour pouvoir l'utiliser dans
+    l'adaptation sans le recalculer.
+    """
+    embedding = get_embedding(classifier, audio_path)
+    speaker, best_score, scores = _score_and_decide(embedding, enrolled_speakers)
+    return speaker, best_score, scores, embedding
+
+
+def identify_array(classifier, audio_array, enrolled_speakers):
+    """
+    Identique à identify(), mais à partir d'un segment audio déjà en
+    mémoire (np.array 1D) — utilisé par le streaming, pas de fichier
+    intermédiaire nécessaire.
+    """
+    embedding = get_embedding_from_array(classifier, audio_array)
+    speaker, best_score, scores = _score_and_decide(embedding, enrolled_speakers)
+    return speaker, best_score, scores, embedding
 
 
 def adapt_profile(enrolled_speakers, speaker_name, new_embedding, alpha=ADAPTATION_ALPHA):
@@ -86,13 +102,30 @@ def adapt_profile(enrolled_speakers, speaker_name, new_embedding, alpha=ADAPTATI
 
 def identify_and_adapt(classifier, audio_path, enrolled_speakers, save_path=None):
     """
-    Identifie un échantillon, et adapte le profil du conducteur si la
-    confiance est suffisante. Sauvegarde le fichier mis à jour si
+    Identifie un échantillon (fichier), et adapte le profil du conducteur
+    si la confiance est suffisante. Sauvegarde le fichier mis à jour si
     save_path est fourni et qu'une adaptation a eu lieu.
 
     Retourne (speaker_name, best_score, all_scores, adapted: bool).
     """
     speaker, score, scores, embedding = identify(classifier, audio_path, enrolled_speakers)
+
+    adapted = False
+    if speaker != "INCONNU" and score >= CONFIDENT_THRESHOLD:
+        adapt_profile(enrolled_speakers, speaker, embedding)
+        adapted = True
+        if save_path:
+            save_enrolled(enrolled_speakers, save_path)
+
+    return speaker, score, scores, adapted
+
+
+def identify_and_adapt_array(classifier, audio_array, enrolled_speakers, save_path=None):
+    """
+    Équivalent de identify_and_adapt(), mais pour un segment audio déjà
+    en mémoire (streaming). Mêmes règles d'adaptation.
+    """
+    speaker, score, scores, embedding = identify_array(classifier, audio_array, enrolled_speakers)
 
     adapted = False
     if speaker != "INCONNU" and score >= CONFIDENT_THRESHOLD:
