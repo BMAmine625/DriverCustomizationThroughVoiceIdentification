@@ -17,6 +17,7 @@ pretrained_ecapa/
 dataset/
 test_samples/
 models/*.pkl
+preferences.json
 
 # Fichiers audio bruts, au cas où ils traînent ailleurs dans le repo
 *.wav

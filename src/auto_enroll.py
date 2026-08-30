@@ -6,6 +6,10 @@ même détection de parole que le streaming), les sauvegarde en .wav dans
 dataset/<driver_name>/, puis lance l'enrôlement — plus besoin de créer
 les fichiers .wav à la main.
 
+Une fois l'enrôlement vocal terminé, propose de configurer les
+préférences du conducteur (siège, volant, etc.) tout de suite, ou plus
+tard via configure_preferences.py.
+
 Ce script a besoin d'un vrai micro physique (ne fonctionne pas dans un
 Codespace).
 
@@ -24,6 +28,7 @@ import soundfile as sf
 from common import load_model
 from audio_capture import speech_segments, SAMPLE_RATE, MIN_SPEECH_SECONDS
 from enrollment import enroll_one_speaker, load_existing, save_enrolled
+from preferences import get_schema, prompt_preferences_interactive, set_driver_preferences
 
 
 def record_samples(driver_name, dataset_dir, n_samples):
@@ -62,6 +67,33 @@ def record_samples(driver_name, dataset_dir, n_samples):
     return speaker_dir, collected
 
 
+def prompt_and_save_preferences(driver_name, preferences_path):
+    """
+    Demande au conducteur s'il veut configurer ses préférences
+    maintenant. Si oui, guide la saisie via le schéma et sauvegarde.
+    Si non, rappelle comment le faire plus tard.
+    """
+    answer = input(
+        f"\nVoulez-vous configurer les préférences de '{driver_name}' maintenant ? (o/n) : "
+    ).strip().lower()
+
+    if answer in ("o", "oui", "y", "yes"):
+        schema = get_schema(preferences_path)
+        if not schema:
+            print(f"[!] Aucun schéma de préférences trouvé dans {preferences_path}, "
+                  f"impossible de proposer la saisie maintenant.")
+            return
+
+        print(f"\n=== Configuration des préférences de '{driver_name}' ===")
+        print("(Entrée pour garder la valeur par défaut affichée entre crochets)\n")
+        driver_preferences = prompt_preferences_interactive(schema)
+        set_driver_preferences(driver_name, driver_preferences, preferences_path)
+        print(f"[OK] Préférences enregistrées dans {preferences_path}")
+    else:
+        print(f"\nPas de souci — tu pourras les configurer plus tard avec :")
+        print(f"    python3 configure_preferences.py {driver_name}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Enrôlement automatique via micro")
     parser.add_argument("driver_name", help="Nom du conducteur (= nom du dossier créé dans dataset/)")
@@ -70,6 +102,9 @@ def main():
     parser.add_argument("--dataset", default="../dataset")
     parser.add_argument("--output", default="../models/enrolled_speakers.pkl")
     parser.add_argument("--pretrained", default="../pretrained_ecapa")
+    parser.add_argument("--preferences", default="../preferences.json")
+    parser.add_argument("--skip-preferences-prompt", action="store_true",
+                         help="Ne pas proposer la configuration des préférences après l'enrôlement")
     args = parser.parse_args()
 
     speaker_dir, collected = record_samples(args.driver_name, args.dataset, args.samples)
@@ -97,6 +132,9 @@ def main():
     action = "Ré-enrôlé" if is_update else "Enrôlé"
     print(f"\n[OK] {action} : '{args.driver_name}' "
           f"({n_total_samples} échantillons au total dans son dossier)")
+
+    if not args.skip_preferences_prompt:
+        prompt_and_save_preferences(args.driver_name, args.preferences)
 
 
 if __name__ == "__main__":

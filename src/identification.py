@@ -2,7 +2,7 @@
 Identification des conducteurs - script dédié
 ==================================================
 Ne fait QUE l'identification — pas d'enrôlement ici. Utilise
-../models/enrolled_speakers.pkl généré par enrollment.py.
+../models/enrolled_speakers.pkl généré par enrollment.py / auto_enroll.py.
 
 Amélioration continue (adaptation incrémentale) :
 -----------------------------------------------------
@@ -19,9 +19,20 @@ et sans risque de "dérive" (alpha est volontairement petit, et on
 n'adapte que sur des identifications déjà très sûres).
 
 Important : ce n'est PAS un vrai ré-entraînement du modèle ECAPA-TDNN
-(ça, ce serait très coûteau et inutile ici) — c'est une mise à jour du
+(ça, ce serait très coûteux et inutile ici) — c'est une mise à jour du
 "template" de référence de chaque conducteur, ce qui est l'équivalent
 pratique pour ce genre de système par embeddings.
+
+Historique de calibration (pour référence dans le rapport) :
+    - ACCEPT_THRESHOLD initialement à 0.25 : un locuteur non-enrôlé
+      (test avec un parent non-enrôlé) obtenait un score suffisant pour
+      être accepté à tort. Remonté à 0.60 pour mieux rejeter les
+      inconnus, au prix d'un risque légèrement accru de faux rejets sur
+      des identifications correctes mais moins nettes (voix fatiguée,
+      bruit ambiant, etc.) — à surveiller lors des tests suivants.
+    - CONFIDENT_THRESHOLD remonté à 0.75 en cohérence, pour que
+      l'adaptation incrémentale ne se déclenche que sur des
+      identifications vraiment sans ambiguïté.
 """
 
 import os
@@ -29,14 +40,15 @@ import pickle
 import argparse
 
 from common import load_model, get_embedding, get_embedding_from_array, cosine_similarity
+from preferences import load_preferences, get_preferences, apply_preferences
 
 
-# Seuil d'acceptation normal : en dessous, on rejette comme "INCONNU"
-ACCEPT_THRESHOLD = 0.25
+# Seuil d'acceptation : en dessous, on rejette comme "INCONNU"
+ACCEPT_THRESHOLD = 0.60
 
-# Seuil de confiance pour déclencher l'adaptation : volontairement plus
-# strict que ACCEPT_THRESHOLD, pour n'adapter que sur des cas très sûrs
-CONFIDENT_THRESHOLD = 0.45
+# Seuil de confiance pour déclencher l'adaptation : plus strict que
+# ACCEPT_THRESHOLD, pour n'adapter que sur des cas très sûrs
+CONFIDENT_THRESHOLD = 0.75
 
 # Poids de la mise à jour (moyenne mobile). Petit = adaptation lente et
 # prudente. À calibrer : 0.05-0.15 est un bon point de départ.
@@ -142,6 +154,7 @@ def main():
     parser.add_argument("audio_file", help="Chemin du fichier audio à identifier")
     parser.add_argument("--models", default="../models/enrolled_speakers.pkl")
     parser.add_argument("--pretrained", default="../pretrained_ecapa")
+    parser.add_argument("--preferences", default="../preferences.json")
     parser.add_argument("--no-adapt", action="store_true",
                          help="Désactive l'adaptation incrémentale")
     args = parser.parse_args()
@@ -169,6 +182,11 @@ def main():
 
     if adapted:
         print(f"[OK] Profil de '{speaker}' mis à jour (identification très confiante)")
+
+    if speaker != "INCONNU":
+        all_preferences = load_preferences(args.preferences)
+        driver_preferences = get_preferences(speaker, all_preferences)
+        apply_preferences(speaker, driver_preferences)
 
 
 if __name__ == "__main__":
