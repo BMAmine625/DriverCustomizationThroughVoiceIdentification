@@ -230,7 +230,7 @@ API) s'adapte automatiquement à tout changement de structure.
 ## Notes techniques
 
 - L'identification rejette un locuteur comme `INCONNU` si le meilleur score
-  de similarité cosinus est sous `ACCEPT_THRESHOLD` (0.60, `identification.py`).
+  de similarité cosinus est sous `ACCEPT_THRESHOLD` (0.50, `identification.py`).
 - L'adaptation incrémentale ne se déclenche que sur des scores très
   confiants (`CONFIDENT_THRESHOLD`, 0.75) — volontairement plus strict que
   le seuil d'acceptation, pour éviter de dériver un profil sur une
