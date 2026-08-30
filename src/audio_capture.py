@@ -1,11 +1,9 @@
 """
 Capture micro continue avec détection de parole (VAD)
 =========================================================
-Module partagé par streaming_identification.py (identification en
-direct) et auto_enroll.py (enrôlement automatique) — la même logique
-de segmentation de la parole est utilisée dans les deux cas, pour
-garantir que les segments produits pendant l'enrôlement et pendant
-l'identification sont cohérents (même durée min/max, même VAD).
+Module partagé par streaming_identification.py, auto_enroll.py, et
+api_server.py — la même logique de segmentation de la parole est
+utilisée partout, pour garantir des segments cohérents.
 """
 
 import queue
@@ -24,8 +22,8 @@ ENERGY_THRESHOLD = 0.01        # seuil RMS parole/silence — à calibrer selon
                                 # ton micro et le bruit ambiant (ex. bruit moteur)
 
 QUEUE_TIMEOUT = 0.2            # timeout court sur l'attente de bloc audio, pour
-                                # que Ctrl+C (KeyboardInterrupt) soit pris en compte
-                                # rapidement au lieu de bloquer indéfiniment
+                                # que Ctrl+C (KeyboardInterrupt) et stop_event
+                                # soient pris en compte rapidement
 
 
 def is_speech(block, threshold=ENERGY_THRESHOLD):
@@ -41,7 +39,7 @@ def speech_segments(stop_event=None):
 
     stop_event : threading.Event optionnel. Si fourni et déclenché
     (stop_event.set()), le générateur s'arrête proprement et ferme le
-    flux micro, au lieu de compter uniquement sur Ctrl+C.
+    flux micro.
 
     Usage :
         for segment in speech_segments():
@@ -65,12 +63,12 @@ def speech_segments(stop_event=None):
     ):
         while True:
             if stop_event is not None and stop_event.is_set():
-                return  # ferme le "with" proprement (flux micro coupé) et termine le générateur
+                return
 
             try:
                 block = block_queue.get(timeout=QUEUE_TIMEOUT)
             except queue.Empty:
-                continue  # pas de nouveau bloc, on reboucle (et Ctrl+C/stop_event sont vérifiés ici)
+                continue
 
             if is_speech(block):
                 speech_buffer.append(block)

@@ -1,10 +1,9 @@
 """
 Fonctions partagées - ECAPA-TDNN
 ===================================
-Code commun utilisé par enrollment.py et identification.py, pour éviter
-la duplication et garantir que l'extraction d'embedding est identique
-partout (essentiel : un embedding calculé différemment à l'enrôlement
-et à l'identification fausserait les comparaisons).
+Code commun utilisé par enrollment.py, identification.py, api_server.py,
+etc., pour éviter la duplication et garantir que l'extraction
+d'embedding est identique partout.
 """
 
 import torch

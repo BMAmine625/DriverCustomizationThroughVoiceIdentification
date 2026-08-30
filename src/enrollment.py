@@ -9,10 +9,6 @@ contente de charger le fichier généré ici.
 Usage :
     python3 enrollment.py                  # enrôle tout le monde depuis dataset/
     python3 enrollment.py --driver driver_3  # enrôle (ou ré-enrôle) un seul conducteur
-
-Le fichier ../models/enrolled_speakers.pkl est mis à jour de façon
-incrémentale : les conducteurs déjà présents ne sont pas écrasés, sauf
-si tu enrôles explicitement le même nom à nouveau.
 """
 
 import os
@@ -46,7 +42,7 @@ def load_existing(path):
 
 
 def save_enrolled(speaker_embeddings, path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "wb") as f:
         pickle.dump(speaker_embeddings, f)
     print(f"[OK] Sauvegardé dans {path} ({len(speaker_embeddings)} conducteurs)")

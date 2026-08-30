@@ -44,7 +44,7 @@ from preferences import load_preferences, get_preferences, apply_preferences
 
 
 # Seuil d'acceptation : en dessous, on rejette comme "INCONNU"
-ACCEPT_THRESHOLD = 0.60
+ACCEPT_THRESHOLD = 0.50
 
 # Seuil de confiance pour déclencher l'adaptation : plus strict que
 # ACCEPT_THRESHOLD, pour n'adapter que sur des cas très sûrs

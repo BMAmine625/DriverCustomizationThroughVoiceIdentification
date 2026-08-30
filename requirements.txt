@@ -13,3 +13,9 @@ numpy
 soundfile
 speechbrain
 sounddevice
+
+# --- API (service backend pour un client léger, ex. Kotlin/Android Automotive) ---
+fastapi
+uvicorn
+python-multipart
+websockets

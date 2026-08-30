@@ -141,6 +141,47 @@ def prompt_preferences_interactive(schema):
     return result
 
 
+def validate_preferences(schema, data, _path=""):
+    """
+    Validation NON interactive d'un dict de préférences par rapport au
+    schéma — utilisée par l'API (le client envoie un JSON complet en une
+    fois, pas de saisie champ par champ possible côté serveur).
+
+    Vérifie, récursivement, que chaque champ du schéma est présent dans
+    `data`, que son type est numérique, et qu'il respecte les bornes
+    min/max. Lève un ValueError avec un message explicite (incluant le
+    chemin du champ fautif) au premier problème rencontré. Retourne un
+    dict "nettoyé" (mêmes clés que le schéma) si tout est valide.
+
+    Ignore les clés supplémentaires présentes dans `data` mais absentes
+    du schéma (permissif), pour rester tolérant si le schéma évolue.
+    """
+    if not isinstance(data, dict):
+        raise ValueError(f"'{_path or 'racine'}' doit être un objet JSON.")
+
+    result = {}
+    for key, spec in schema.items():
+        field_path = f"{_path}.{key}" if _path else key
+
+        if _is_field_spec(spec):
+            if key not in data:
+                raise ValueError(f"Champ manquant : '{field_path}'.")
+            value = data[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"'{field_path}' doit être numérique (reçu : {value!r}).")
+            min_v, max_v = spec["min"], spec["max"]
+            if not (min_v <= value <= max_v):
+                raise ValueError(f"'{field_path}' hors plage ({min_v} à {max_v}), reçu : {value}.")
+            result[key] = value
+
+        elif isinstance(spec, dict):
+            if key not in data or not isinstance(data[key], dict):
+                raise ValueError(f"Catégorie manquante ou invalide : '{field_path}'.")
+            result[key] = validate_preferences(spec, data[key], _path=field_path)
+
+    return result
+
+
 def apply_preferences(driver_name, preferences):
     """
     "Applique" les préférences d'un conducteur — pour l'instant, se
