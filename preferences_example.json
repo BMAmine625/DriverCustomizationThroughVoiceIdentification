@@ -1,0 +1,69 @@
+{
+  "_comment": "Structure des préférences. '_schema' définit les catégories/champs demandés à l'enrôlement, avec unité et bornes (min/max) pour validation - modifie-le librement, le reste du code s'adapte automatiquement. Les entrées driver_X sont les vraies valeurs enregistrées par conducteur (juste des nombres, pas de min/max/default).",
+
+  "_schema": {
+    "seat": {
+      "position_avant_arriere": {"unit": "%", "min": 0, "max": 100, "default": 50},
+      "hauteur": {"unit": "%", "min": 0, "max": 100, "default": 50},
+      "inclinaison_dossier": {"unit": "degres", "min": 90, "max": 160, "default": 110}
+    },
+    "steering_wheel": {
+      "hauteur": {"unit": "%", "min": 0, "max": 100, "default": 50},
+      "profondeur": {"unit": "%", "min": 0, "max": 100, "default": 50}
+    },
+    "mirrors": {
+      "retroviseur_gauche": {
+        "horizontal": {"unit": "degres", "min": -30, "max": 30, "default": 0},
+        "vertical": {"unit": "degres", "min": -20, "max": 20, "default": 0}
+      },
+      "retroviseur_droit": {
+        "horizontal": {"unit": "degres", "min": -30, "max": 30, "default": 0},
+        "vertical": {"unit": "degres", "min": -20, "max": 20, "default": 0}
+      }
+    },
+    "climate": {
+      "temperature_celsius": {"unit": "°C", "min": 16, "max": 30, "default": 21},
+      "vitesse_ventilation": {"unit": "palier", "min": 1, "max": 7, "default": 3}
+    }
+  },
+
+  "driver_1": {
+    "seat": {
+      "position_avant_arriere": 45,
+      "hauteur": 30,
+      "inclinaison_dossier": 100
+    },
+    "steering_wheel": {
+      "hauteur": 40,
+      "profondeur": 30
+    },
+    "mirrors": {
+      "retroviseur_gauche": {"horizontal": 10, "vertical": -5},
+      "retroviseur_droit": {"horizontal": 12, "vertical": -4}
+    },
+    "climate": {
+      "temperature_celsius": 21,
+      "vitesse_ventilation": 2
+    }
+  },
+
+  "driver_2": {
+    "seat": {
+      "position_avant_arriere": 60,
+      "hauteur": 40,
+      "inclinaison_dossier": 105
+    },
+    "steering_wheel": {
+      "hauteur": 55,
+      "profondeur": 45
+    },
+    "mirrors": {
+      "retroviseur_gauche": {"horizontal": 8, "vertical": -3},
+      "retroviseur_droit": {"horizontal": 9, "vertical": -2}
+    },
+    "climate": {
+      "temperature_celsius": 19,
+      "vitesse_ventilation": 3
+    }
+  }
+}

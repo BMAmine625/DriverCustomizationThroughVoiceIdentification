@@ -16,7 +16,7 @@ pretrained_ecapa/
 # ne doivent pas être partagés publiquement sur le repo (vie privée + poids des fichiers)
 dataset/
 test_samples/
-models/*.pkl
+models/
 preferences.json
 
 # Fichiers audio bruts, au cas où ils traînent ailleurs dans le repo
