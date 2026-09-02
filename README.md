@@ -30,7 +30,45 @@ models/           Modèles / embeddings sauvegardés (générés automatiquement
 pretrained_ecapa/ Cache du modèle ECAPA-TDNN pré-entraîné (généré au 1er lancement)
 preferences.json  Préférences par conducteur (siège, volant, rétroviseurs, climatisation)
 src/              Scripts Python
+driver_ui_project/driver_ui/  Client UI Kotlin/Jetpack Compose (voir section dédiée)
 ```
+
+## Client UI (Kotlin / Jetpack Compose)
+
+Un client graphique, indépendant des scripts Python (`driver_ui_project/driver_ui/`),
+affiche visuellement les préférences d'un conducteur : un siège vu de profil
+et les trois rétroviseurs, animés selon les valeurs reçues.
+
+**État actuel :** interface fonctionnelle avec des données de test
+(`MockPreferencesRepository.kt`), pas encore connectée à `api_server.py` —
+le branchement réseau (REST/WebSocket) est la prochaine étape.
+
+**Éléments visuels :**
+- **Siège** : vue de profil avec repère tableau de bord/volant (pour situer
+  l'avant du véhicule), coussin, dossier et appuie-tête solidaires. La
+  position avant/arrière et la hauteur sont animées directement depuis les
+  pourcentages du schéma de préférences. L'inclinaison du dossier est
+  remappée depuis la plage brute (90–160°) vers une plage visuelle plus
+  réaliste et plafonnée (0–40°), pour éviter un rendu physiquement
+  impossible (dossier qui semble se replier sur l'assise).
+- **Rétroviseurs** (gauche, intérieur, droit) : un repère (point) se déplace
+  à l'intérieur de chaque glace selon les angles horizontal/vertical, pour
+  une lecture claire du réglage même sur de petits angles.
+- **Thème** : palette sombre inspirée des tableaux de bord automobiles
+  modernes (bleu électrique, accent ambre), plutôt que le thème clair par
+  défaut de Material Design.
+
+**Structure du code (`app/src/main/java/com/pfa/driverui/`) :**
+
+| Fichier | Rôle |
+|---|---|
+| `model/PreferencesModels.kt` | Classes de données reflétant le schéma `preferences.json` (siège, rétroviseurs) |
+| `data/MockPreferencesRepository.kt` | Données de test (à remplacer par de vrais appels réseau) |
+| `ui/theme/Theme.kt` | Palette de couleurs sombre, style tableau de bord |
+| `ui/SeatView.kt` | Rendu animé du siège |
+| `ui/MirrorView.kt` | Rendu animé d'un rétroviseur |
+| `ui/CarPreferencesScreen.kt` | Écran principal (sélecteur de conducteur de test + panneaux) |
+| `MainActivity.kt` | Point d'entrée de l'application |
 
 ## Fonctionnalités
 
@@ -230,7 +268,7 @@ API) s'adapte automatiquement à tout changement de structure.
 ## Notes techniques
 
 - L'identification rejette un locuteur comme `INCONNU` si le meilleur score
-  de similarité cosinus est sous `ACCEPT_THRESHOLD` (0.50, `identification.py`).
+  de similarité cosinus est sous `ACCEPT_THRESHOLD` (0.60, `identification.py`).
 - L'adaptation incrémentale ne se déclenche que sur des scores très
   confiants (`CONFIDENT_THRESHOLD`, 0.75) — volontairement plus strict que
   le seuil d'acceptation, pour éviter de dériver un profil sur une
