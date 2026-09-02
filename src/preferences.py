@@ -203,8 +203,6 @@ def apply_preferences(driver_name, preferences):
     #       seat_actuator.set_position(preferences["seat"])
     #   if "mirrors" in preferences:
     #       mirror_actuator.set_angles(preferences["mirrors"])
-    #   if "climate" in preferences:
-    #       climate_control.set(preferences["climate"])
     #
     # Pour l'instant, aucun matériel n'est branché — seul l'affichage
     # ci-dessus simule le comportement attendu.
