@@ -1,44 +1,35 @@
 package com.pfa.driverui.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.pfa.driverui.data.MockPreferencesRepository
-import com.pfa.driverui.model.DEFAULT_PREFERENCES
+import com.pfa.driverui.model.DriverPreferences
 
-/**
- * Main demo screen: manual driver selector (test-only stand-in for real
- * voice identification) plus animated seat and mirrors reflecting the
- * selected driver's preferences.
- */
 @Composable
-fun CarPreferencesScreen() {
-    var currentDriver by remember { mutableStateOf<String?>(null) }
-
-    val preferences = MockPreferencesRepository.preferencesFor(currentDriver) ?: DEFAULT_PREFERENCES
-
+fun CarPreferencesScreen(
+    driverName: String,
+    preferences: DriverPreferences,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
-            .background(color = MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
             .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -48,46 +39,18 @@ fun CarPreferencesScreen() {
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
-            text = currentDriver?.let { "Identified: $it" } ?: "No driver identified",
+            text = "Identified: $driverName",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
         )
 
-        // Test-only driver selector (replaced by voice identification events later)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            MockPreferencesRepository.availableDrivers.forEach { driverName ->
-                val selected = currentDriver == driverName
-                Button(
-                    onClick = { currentDriver = driverName },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                ) {
-                    Text(driverName)
-                }
-            }
-            Button(
-                onClick = { currentDriver = null },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (currentDriver == null) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = if (currentDriver == null) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-            ) {
-                Text("None")
-            }
+        DashboardPanel(title = "Seat") {
+            SeatView(preferences = preferences.seat)
         }
 
-        DashboardPanel(title = "Seat", modifier = Modifier.padding(top = 20.dp)) {
-            SeatView(preferences = preferences.seat)
+        DashboardPanel(title = "Steering Wheel", modifier = Modifier.padding(top = 16.dp)) {
+            SteeringWheelView(preferences = preferences.steeringWheel)
         }
 
         DashboardPanel(title = "Mirrors", modifier = Modifier.padding(top = 16.dp)) {
@@ -97,10 +60,17 @@ fun CarPreferencesScreen() {
                 MirrorView(label = "Right", mirror = preferences.mirrors.droit)
             }
         }
+
+        DashboardPanel(title = "Climate", modifier = Modifier.padding(top = 16.dp, bottom = 16.dp)) {
+            ClimateView(preferences = preferences.climate)
+        }
+
+        OutlinedButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+            Text("Identify another driver")
+        }
     }
 }
 
-/** A rounded dark panel, giving each preference group a "dashboard module" look. */
 @Composable
 private fun DashboardPanel(
     title: String,

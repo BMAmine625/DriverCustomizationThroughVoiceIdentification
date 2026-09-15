@@ -5,11 +5,6 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-/**
- * Modern-flat automotive palette (Tesla/BMW-style dashboard look):
- * dark charcoal background, electric-blue structural accent, warm
- * amber for moving indicators (mirror aim dot), on dark panels.
- */
 val CarBackground = Color(0xFF12151C)
 val CarSurface = Color(0xFF1B1F29)
 val CarSurfaceVariant = Color(0xFF262B37)

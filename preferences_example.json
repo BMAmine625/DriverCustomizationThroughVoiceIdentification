@@ -7,6 +7,10 @@
       "hauteur": {"unit": "%", "min": 0, "max": 100, "default": 50},
       "inclinaison_dossier": {"unit": "degres", "min": 90, "max": 160, "default": 110}
     },
+    "steering_wheel": {
+      "hauteur": {"unit": "%", "min": 0, "max": 100, "default": 50},
+      "profondeur": {"unit": "%", "min": 0, "max": 100, "default": 50}
+    },
     "mirrors": {
       "retroviseur_gauche": {
         "horizontal": {"unit": "degres", "min": -30, "max": 30, "default": 0},
@@ -20,6 +24,10 @@
         "horizontal": {"unit": "degres", "min": -30, "max": 30, "default": 0},
         "vertical": {"unit": "degres", "min": -20, "max": 20, "default": 0}
       }
+    },
+    "climate": {
+      "temperature_celsius": {"unit": "°C", "min": 16, "max": 30, "default": 21},
+      "vitesse_ventilation": {"unit": "palier", "min": 1, "max": 7, "default": 3}
     }
   },
 
@@ -29,10 +37,18 @@
       "hauteur": 30,
       "inclinaison_dossier": 100
     },
+    "steering_wheel": {
+      "hauteur": 40,
+      "profondeur": 30
+    },
     "mirrors": {
       "retroviseur_gauche": {"horizontal": 10, "vertical": -5},
       "retroviseur_droit": {"horizontal": 12, "vertical": -4},
       "retroviseur_interieur": {"horizontal": 2, "vertical": 3}
+    },
+    "climate": {
+      "temperature_celsius": 21,
+      "vitesse_ventilation": 2
     }
   },
 
@@ -42,10 +58,18 @@
       "hauteur": 40,
       "inclinaison_dossier": 105
     },
+    "steering_wheel": {
+      "hauteur": 55,
+      "profondeur": 45
+    },
     "mirrors": {
       "retroviseur_gauche": {"horizontal": 8, "vertical": -3},
       "retroviseur_droit": {"horizontal": 9, "vertical": -2},
       "retroviseur_interieur": {"horizontal": -1, "vertical": 1}
+    },
+    "climate": {
+      "temperature_celsius": 19,
+      "vitesse_ventilation": 3
     }
   }
 }

@@ -26,13 +26,6 @@ import com.pfa.driverui.ui.theme.CarElectricBlue
 import com.pfa.driverui.ui.theme.CarOutline
 import com.pfa.driverui.ui.theme.CarSurfaceVariant
 
-/**
- * Mirror representation, restyled to match the modern-flat automotive
- * palette: a bezeled housing with a thin outline, and an amber aim
- * marker moving inside the glass — kept from the earlier version since
- * a moving marker proved far more visible than a subtle 3D tilt at
- * these angle ranges.
- */
 @Composable
 fun MirrorView(label: String, mirror: MirrorPreferences, modifier: Modifier = Modifier) {
     val glassWidth = 46.dp
@@ -59,7 +52,6 @@ fun MirrorView(label: String, mirror: MirrorPreferences, modifier: Modifier = Mo
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Housing / bezel
         Box(
             modifier = Modifier
                 .width(60.dp)
@@ -69,7 +61,6 @@ fun MirrorView(label: String, mirror: MirrorPreferences, modifier: Modifier = Mo
                 .padding(7.dp),
             contentAlignment = Alignment.Center,
         ) {
-            // Glass
             Box(
                 modifier = Modifier
                     .width(glassWidth)
@@ -77,7 +68,6 @@ fun MirrorView(label: String, mirror: MirrorPreferences, modifier: Modifier = Mo
                     .background(CarElectricBlue.copy(alpha = 0.18f), RoundedCornerShape(5.dp))
                     .border(1.dp, CarElectricBlue.copy(alpha = 0.5f), RoundedCornerShape(5.dp)),
             ) {
-                // Aim marker
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)

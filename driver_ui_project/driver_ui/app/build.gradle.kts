@@ -15,7 +15,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.2.0"
     }
 
     buildFeatures {
@@ -41,4 +41,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
+
+    // Client réseau (REST + WebSocket) pour communiquer avec api_server.py
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

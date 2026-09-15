@@ -1,35 +1,10 @@
 """
 API du système de reconnaissance vocale conducteur
 ======================================================
-Service backend destiné à un client léger (ex. application Kotlin sur
-Android Automotive OS). N'exécute AUCUNE logique nouvelle : il se
-contente d'orchestrer common.py / identification.py / audio_capture.py
-/ preferences.py / enrollment.py déjà existants et testés.
-
-Important — où tourne ce service :
-------------------------------------
-Le microphone utilisé (identification en flux continu, enrôlement
-automatique) est celui de la machine qui EXÉCUTE ce service, pas celui
-du client qui s'y connecte. En usage réel, ce service tournerait sur un
-petit ordinateur compagnon embarqué dans le véhicule (ex. Raspberry Pi
-branché au micro de l'habitacle), et le client (Kotlin/Android
-Automotive, ou autre) s'y connecterait via le réseau local du véhicule.
-
-Lancement :
-    uvicorn api_server:app --host 0.0.0.0 --port 8000
-
-Variables d'environnement (optionnelles, sinon valeurs par défaut
-relatives à src/, comme les autres scripts) :
-    VOICE_ID_MODELS       chemin du fichier enrolled_speakers.pkl
-    VOICE_ID_PRETRAINED   dossier de cache du modèle ECAPA-TDNN
-    VOICE_ID_PREFERENCES  chemin du fichier preferences.json
-    VOICE_ID_DATASET      dossier dataset/ (pour l'enrôlement au micro)
-
-Dépendances supplémentaires par rapport aux scripts existants :
-    pip install fastapi uvicorn python-multipart --break-system-packages
 """
 
 import os
+import shutil
 import asyncio
 import queue
 import tempfile
@@ -50,7 +25,15 @@ from identification import (
 )
 from audio_capture import MIN_SPEECH_SECONDS, SAMPLE_RATE, speech_segments
 from enrollment import enroll_one_speaker
-from preferences import get_preferences, get_schema, load_preferences, set_driver_preferences, validate_preferences
+from preferences import (
+    delete_driver_preferences,
+    get_preferences,
+    get_schema,
+    load_preferences,
+    rename_driver_preferences,
+    set_driver_preferences,
+    validate_preferences,
+)
 
 MODELS_PATH = os.environ.get("VOICE_ID_MODELS", "../models/enrolled_speakers.pkl")
 PRETRAINED_DIR = os.environ.get("VOICE_ID_PRETRAINED", "../pretrained_ecapa")
@@ -60,12 +43,9 @@ DATASET_DIR = os.environ.get("VOICE_ID_DATASET", "../dataset")
 app = FastAPI(
     title="Voice Driver Identification API",
     description="Service d'identification vocale et de gestion des préférences conducteur (PFA).",
-    version="0.1.0",
+    version="0.2.0",
 )
 
-# CORS permissif pour faciliter le développement du client (Kotlin, web,
-# etc.) sur le réseau local. À restreindre si le service est exposé
-# au-delà d'un réseau de confiance.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -73,10 +53,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- État global, chargé une seule fois au démarrage du service ---
 classifier = None
 enrolled_speakers = {}
-enrolled_lock = threading.Lock()  # protège les accès concurrents (REST + WebSocket)
+enrolled_lock = threading.Lock()
 
 
 @app.on_event("startup")
@@ -95,24 +74,68 @@ def on_startup():
 
 @app.get("/health")
 def health():
-    """Vérifie que le service tourne et que le modèle est chargé."""
     return {"status": "ok", "model_loaded": classifier is not None}
 
 
 @app.get("/drivers")
 def list_drivers():
-    """Liste les conducteurs actuellement enrôlés."""
     with enrolled_lock:
         return {"drivers": list(enrolled_speakers.keys())}
 
 
+@app.delete("/drivers/{driver_name}")
+def delete_driver(driver_name: str):
+    """
+    Supprime complètement un conducteur : profil vocal (embedding),
+    préférences enregistrées, et ses échantillons audio bruts sur disque.
+    """
+    with enrolled_lock:
+        removed_voice = enrolled_speakers.pop(driver_name, None) is not None
+        if removed_voice:
+            save_enrolled(enrolled_speakers, MODELS_PATH)
+
+    removed_prefs = delete_driver_preferences(driver_name, PREFERENCES_PATH)
+
+    speaker_dir = os.path.join(DATASET_DIR, driver_name)
+    if os.path.isdir(speaker_dir):
+        shutil.rmtree(speaker_dir)
+
+    if not removed_voice and not removed_prefs:
+        raise HTTPException(status_code=404, detail=f"Conducteur '{driver_name}' introuvable.")
+
+    return {"status": "ok", "driver": driver_name, "deleted": True}
+
+
+@app.post("/drivers/{old_name}/rename")
+def rename_driver(old_name: str, new_name: str = Query(...)):
+    """
+    Renomme un conducteur : déplace son profil vocal, ses préférences,
+    et son dossier d'échantillons audio vers le nouveau nom.
+    """
+    new_name = new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=422, detail="Le nouveau nom ne peut pas être vide.")
+
+    with enrolled_lock:
+        if old_name not in enrolled_speakers:
+            raise HTTPException(status_code=404, detail=f"Conducteur '{old_name}' introuvable.")
+        if new_name in enrolled_speakers:
+            raise HTTPException(status_code=409, detail=f"'{new_name}' existe déjà.")
+        enrolled_speakers[new_name] = enrolled_speakers.pop(old_name)
+        save_enrolled(enrolled_speakers, MODELS_PATH)
+
+    rename_driver_preferences(old_name, new_name, PREFERENCES_PATH)
+
+    old_dir = os.path.join(DATASET_DIR, old_name)
+    new_dir = os.path.join(DATASET_DIR, new_name)
+    if os.path.isdir(old_dir) and not os.path.exists(new_dir):
+        os.rename(old_dir, new_dir)
+
+    return {"status": "ok", "old_name": old_name, "new_name": new_name}
+
+
 @app.get("/preferences/schema")
 def preferences_schema():
-    """
-    Retourne le schéma des préférences (catégories, unités, bornes) —
-    utile à un client pour construire dynamiquement un formulaire de
-    configuration sans coder les catégories en dur.
-    """
     schema = get_schema(PREFERENCES_PATH)
     if not schema:
         raise HTTPException(status_code=404, detail="Aucun schéma de préférences défini ('_schema' manquant).")
@@ -121,7 +144,6 @@ def preferences_schema():
 
 @app.get("/preferences/{driver_name}")
 def get_driver_preferences(driver_name: str):
-    """Retourne les préférences enregistrées d'un conducteur."""
     all_prefs = load_preferences(PREFERENCES_PATH)
     prefs = get_preferences(driver_name, all_prefs)
     if prefs is None:
@@ -131,12 +153,6 @@ def get_driver_preferences(driver_name: str):
 
 @app.put("/preferences/{driver_name}")
 def set_preferences(driver_name: str, body: dict):
-    """
-    Enregistre les préférences d'un conducteur. Le corps de la requête
-    doit respecter la structure renvoyée par GET /preferences/schema ;
-    toute valeur hors plage ou champ manquant est rejeté (422) avec un
-    message précisant le champ fautif.
-    """
     schema = get_schema(PREFERENCES_PATH)
     if not schema:
         raise HTTPException(status_code=500, detail="Aucun schéma de préférences défini côté serveur.")
@@ -151,11 +167,6 @@ def set_preferences(driver_name: str, body: dict):
 
 @app.post("/identify")
 async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)):
-    """
-    Identifie un conducteur à partir d'un fichier audio envoyé par le
-    client (multipart/form-data). Retourne le conducteur identifié, les
-    scores détaillés, et ses préférences si connu.
-    """
     if classifier is None:
         raise HTTPException(status_code=503, detail="Modèle non encore chargé, réessayez dans un instant.")
 
@@ -191,19 +202,11 @@ async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)
 
 
 # ======================================================================
-# WebSocket : identification en flux continu (micro du SERVEUR)
+# WebSocket : identification en flux continu
 # ======================================================================
 
 @app.websocket("/ws/identify")
 async def ws_identify(websocket: WebSocket, adapt: bool = Query(False)):
-    """
-    Pousse un message JSON au client à chaque identification, en
-    continu, tant que la connexion reste ouverte. Le microphone utilisé
-    est celui de la machine hébergeant ce service (voir docstring du
-    module).
-
-    Message envoyé : {speaker, score, scores, adapted, preferences}
-    """
     await websocket.accept()
 
     result_queue = queue.Queue()
@@ -251,20 +254,11 @@ async def ws_identify(websocket: WebSocket, adapt: bool = Query(False)):
 
 
 # ======================================================================
-# WebSocket : enrôlement automatique au micro (SERVEUR), avec progression
+# WebSocket : enrôlement automatique au micro
 # ======================================================================
 
 @app.websocket("/ws/enroll")
 async def ws_enroll(websocket: WebSocket, driver_name: str = Query(...), samples: int = Query(5)):
-    """
-    Enrôle un nouveau conducteur en enregistrant au micro du serveur,
-    avec un message de progression après chaque échantillon capté.
-
-    Messages envoyés :
-        {"type": "sample_recorded", "index": i, "total": n, "duration": d}
-        {"type": "done", "driver": ..., "samples_total": n}
-        {"type": "error", "message": "..."}
-    """
     await websocket.accept()
 
     progress_queue = queue.Queue()

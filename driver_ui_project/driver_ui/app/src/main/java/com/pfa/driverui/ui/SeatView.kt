@@ -22,31 +22,12 @@ import com.pfa.driverui.ui.theme.CarElectricBlue
 import com.pfa.driverui.ui.theme.CarOutline
 import com.pfa.driverui.ui.theme.CarSurfaceVariant
 
-/**
- * Side-profile car seat, with a dashboard/steering-wheel silhouette on
- * the left as a fixed visual reference — this makes "upright" and
- * "reclining backward, away from the wheel" unambiguous, unlike a bare
- * pair of rectangles with no orientation cue.
- *
- * Mapping from preferences to visuals:
- *  - positionAvantArriere (%) -> horizontal position along a rail
- *  - hauteur (%)              -> vertical position of the whole seat
- *  - inclinaisonDossier (90-160 deg, raw preference range) -> visual
- *    recline angle, but REMAPPED and CLAMPED to a realistic on-screen
- *    range (0-40 deg from vertical) rather than used directly. Using
- *    the raw range 1:1 made even small preference values look like the
- *    backrest was folding flat, since there's no reference geometry at
- *    that scale to judge a "small" tilt against.
- */
 @Composable
 fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
     val trackWidth = 130.dp
     val trackHalfRangeX = 34.dp
     val heightRange = 22.dp
 
-    // Preference range -> realistic visual recline range (deg from vertical).
-    // 90 (upright) -> 0 deg ; 160 (max recline) -> 40 deg (clearly reclined,
-    // still clearly a seat someone could sit in).
     val maxVisualTiltDeg = 40f
     val rawFraction = ((preferences.inclinaisonDossier - 90f) / (160f - 90f)).coerceIn(0f, 1f)
     val targetTiltDeg = rawFraction * maxVisualTiltDeg
@@ -61,9 +42,6 @@ fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
         animationSpec = tween(durationMillis = 500),
         label = "seatOffsetY",
     )
-    // Positive rotationZ pivoted at the backrest's base tilts it to the
-    // right — i.e. away from the dashboard drawn on the left, which is
-    // the correct "reclining backward" direction.
     val backrestTilt by animateFloatAsState(
         targetValue = targetTiltDeg,
         animationSpec = tween(durationMillis = 500),
@@ -75,7 +53,6 @@ fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
             .width(trackWidth + trackHalfRangeX * 2)
             .height(120.dp),
     ) {
-        // Rail (fixed reference)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -84,7 +61,6 @@ fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
                 .background(CarOutline, RoundedCornerShape(2.dp)),
         )
 
-        // Dashboard + steering wheel silhouette (fixed, establishes "front of car")
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -106,13 +82,11 @@ fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
             )
         }
 
-        // Seat assembly (position/height translated)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .offset(x = (34 + offsetX).dp, y = offsetY.dp),
         ) {
-            // Cushion
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -121,18 +95,15 @@ fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
                     .background(CarElectricBlue, RoundedCornerShape(5.dp)),
             )
 
-            // Backrest + headrest, rotated together as one rigid group,
-            // pivoting at the base (where the backrest meets the cushion).
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .offset(x = 38.dp, y = (-12).dp)
                     .graphicsLayer {
                         rotationZ = backrestTilt
-                        transformOrigin = TransformOrigin(0f, 1f) // pivot at base
+                        transformOrigin = TransformOrigin(0f, 1f)
                     },
             ) {
-                // Backrest
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -140,7 +111,6 @@ fun SeatView(preferences: SeatPreferences, modifier: Modifier = Modifier) {
                         .height(52.dp)
                         .background(CarElectricBlue, RoundedCornerShape(5.dp)),
                 )
-                // Headrest, sits on top of the backrest, moves rigidly with it
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
