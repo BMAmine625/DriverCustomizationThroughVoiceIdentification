@@ -323,6 +323,33 @@ async def ws_enroll(websocket: WebSocket, driver_name: str = Query(...), samples
         thread.join(timeout=2)
 
 
+def _stop_on_q(server: "uvicorn.Server") -> None:
+    """Background thread: type 'q' + Enter to stop the server cleanly.
+
+    Ctrl+C should normally work too, but some terminals bind it to
+    "copy" instead of sending SIGINT, and suspending the process with
+    Ctrl+Z (SIGTSTP) does NOT close the listening socket — the OS still
+    considers the port in use, which is why it showed up as "already in
+    use" on the next run. This gives a reliable way to shut down that
+    doesn't depend on the terminal's signal handling at all.
+    """
+    while True:
+        try:
+            typed = input()
+        except EOFError:
+            break
+        if typed.strip().lower() == "q":
+            server.should_exit = True
+            break
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=False)
+
+    config = uvicorn.Config("api_server:app", host="0.0.0.0", port=8000, reload=False)
+    server = uvicorn.Server(config)
+
+    print("Server starting... type 'q' then Enter at any time to stop it cleanly.")
+    threading.Thread(target=_stop_on_q, args=(server,), daemon=True).start()
+
+    server.run()
