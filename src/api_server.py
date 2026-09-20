@@ -7,6 +7,7 @@ import os
 import shutil
 import asyncio
 import queue
+import signal
 import tempfile
 import threading
 
@@ -58,6 +59,27 @@ enrolled_speakers = {}
 enrolled_lock = threading.Lock()
 
 
+def _stdin_quit_listener() -> None:
+    """Type 'q' + Enter at any time to stop the server cleanly.
+
+    This sends this process a real SIGINT — exactly what Ctrl+C sends —
+    so uvicorn's own signal handler shuts it down gracefully and
+    releases the port. It works no matter how the server was launched
+    (`python api_server.py` or the `uvicorn api_server:app ...` command
+    line), because it doesn't depend on being inside the `__main__`
+    block or holding a reference to the Server object — it's registered
+    from a FastAPI startup event, which fires either way.
+    """
+    while True:
+        try:
+            typed = input()
+        except EOFError:
+            break
+        if typed.strip().lower() == "q":
+            os.kill(os.getpid(), signal.SIGINT)
+            break
+
+
 @app.on_event("startup")
 def on_startup():
     global classifier, enrolled_speakers
@@ -66,6 +88,8 @@ def on_startup():
     if os.path.exists(MODELS_PATH):
         enrolled_speakers = load_enrolled(MODELS_PATH)
     print(f"Conducteurs enrôlés : {list(enrolled_speakers.keys())}")
+    print("Type 'q' then Enter at any time to stop the server cleanly.")
+    threading.Thread(target=_stdin_quit_listener, daemon=True).start()
 
 
 # ======================================================================
@@ -323,33 +347,7 @@ async def ws_enroll(websocket: WebSocket, driver_name: str = Query(...), samples
         thread.join(timeout=2)
 
 
-def _stop_on_q(server: "uvicorn.Server") -> None:
-    """Background thread: type 'q' + Enter to stop the server cleanly.
-
-    Ctrl+C should normally work too, but some terminals bind it to
-    "copy" instead of sending SIGINT, and suspending the process with
-    Ctrl+Z (SIGTSTP) does NOT close the listening socket — the OS still
-    considers the port in use, which is why it showed up as "already in
-    use" on the next run. This gives a reliable way to shut down that
-    doesn't depend on the terminal's signal handling at all.
-    """
-    while True:
-        try:
-            typed = input()
-        except EOFError:
-            break
-        if typed.strip().lower() == "q":
-            server.should_exit = True
-            break
-
-
 if __name__ == "__main__":
     import uvicorn
 
-    config = uvicorn.Config("api_server:app", host="0.0.0.0", port=8000, reload=False)
-    server = uvicorn.Server(config)
-
-    print("Server starting... type 'q' then Enter at any time to stop it cleanly.")
-    threading.Thread(target=_stop_on_q, args=(server,), daemon=True).start()
-
-    server.run()
+    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=False)
