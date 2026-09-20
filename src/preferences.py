@@ -6,6 +6,8 @@ Gestion des préférences conducteur
 import json
 import os
 
+from actuator_seat import get_seat_actuator
+
 
 def _load_raw(path):
     if not os.path.exists(path):
@@ -133,6 +135,21 @@ def apply_preferences(driver_name, preferences):
         return
     print(f"\n=== Chargement des préférences de '{driver_name}' ===")
     _print_nested(preferences, indent=1)
+
+    # --- Actionneurs matériels ---------------------------------------
+    # Seul l'axe avant/arrière du siège a un moteur pas-à-pas câblé pour
+    # l'instant (Wantai 42BYGHW811 + driver TB6600, voir actuator_seat.py).
+    # Les autres axes (hauteur/inclinaison siège, volant, rétroviseurs,
+    # climatisation) restent affichage seul jusqu'à ce que leur matériel
+    # respectif soit disponible.
+    seat = preferences.get("seat", {})
+    if "position_avant_arriere" in seat:
+        try:
+            get_seat_actuator().move_to_percent(seat["position_avant_arriere"])
+        except Exception as e:
+            # Ne bloque jamais le chargement des préférences si le moteur
+            # n'est pas branché/mal câblé — on log et on continue.
+            print(f"[!] Actionneur siège (avant/arrière) : {e}")
 
 
 def _print_nested(d, indent=0):

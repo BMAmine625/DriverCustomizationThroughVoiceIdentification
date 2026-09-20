@@ -8,9 +8,10 @@ utilisée partout, pour garantir des segments cohérents.
 
 import queue
 import numpy as np
+import librosa
 import sounddevice as sd
 
-SAMPLE_RATE = 16000
+SAMPLE_RATE = 16000            # taux attendu par le modèle (ECAPA-TDNN)
 BLOCK_DURATION = 0.03          # 30 ms par bloc capturé
 BLOCK_SIZE = int(SAMPLE_RATE * BLOCK_DURATION)
 
@@ -29,6 +30,21 @@ QUEUE_TIMEOUT = 0.2            # timeout court sur l'attente de bloc audio, pour
 def is_speech(block, threshold=ENERGY_THRESHOLD):
     rms = np.sqrt(np.mean(block ** 2))
     return rms > threshold
+
+
+def _native_input_samplerate() -> int:
+    """Taux d'échantillonnage natif du micro d'entrée par défaut.
+
+    Certains micros USB bon marché refusent d'être ouverts directement
+    à 16 kHz (PaErrorCode -9997, "Invalid sample rate") : leur matériel
+    n'accepte qu'un taux fixe (souvent 44100 ou 48000 Hz), et sur un Pi
+    "Lite" sans PulseAudio/PipeWire, il n'y a pas de conversion logicielle
+    automatique en amont. On interroge donc le taux réellement supporté
+    et on capture à ce taux, puis on ré-échantillonne vers SAMPLE_RATE
+    juste avant de renvoyer le segment (voir speech_segments ci-dessous).
+    """
+    device_info = sd.query_devices(kind="input")
+    return int(device_info["default_samplerate"])
 
 
 def speech_segments(stop_event=None):
@@ -55,10 +71,13 @@ def speech_segments(stop_event=None):
     speech_buffer = []
     silence_duration = 0.0
 
+    native_rate = _native_input_samplerate()
+    native_block_size = int(native_rate * BLOCK_DURATION)
+
     with sd.InputStream(
-        samplerate=SAMPLE_RATE,
+        samplerate=native_rate,
         channels=1,
-        blocksize=BLOCK_SIZE,
+        blocksize=native_block_size,
         callback=callback,
     ):
         while True:
@@ -88,4 +107,8 @@ def speech_segments(stop_event=None):
                 segment = np.concatenate(speech_buffer)
                 speech_buffer = []
                 silence_duration = 0.0
+                if native_rate != SAMPLE_RATE:
+                    segment = librosa.resample(
+                        segment, orig_sr=native_rate, target_sr=SAMPLE_RATE
+                    )
                 yield segment

@@ -27,6 +27,7 @@ from identification import (
 from audio_capture import MIN_SPEECH_SECONDS, SAMPLE_RATE, speech_segments
 from enrollment import enroll_one_speaker
 from preferences import (
+    apply_preferences,
     delete_driver_preferences,
     get_preferences,
     get_schema,
@@ -215,6 +216,8 @@ async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)
     if speaker != "INCONNU":
         all_prefs = load_preferences(PREFERENCES_PATH)
         preferences = get_preferences(speaker, all_prefs)
+        if preferences is not None:
+            apply_preferences(speaker, preferences)
 
     return {
         "speaker": speaker,
@@ -250,6 +253,8 @@ async def ws_identify(websocket: WebSocket, adapt: bool = Query(False)):
                         adapted = False
 
                 preferences = get_preferences(speaker, all_prefs) if speaker != "INCONNU" else None
+                if preferences is not None:
+                    apply_preferences(speaker, preferences)
                 result_queue.put({
                     "speaker": speaker,
                     "score": score,
