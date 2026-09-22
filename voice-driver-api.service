@@ -1,0 +1,15 @@
+[Unit]
+Description=API de reconnaissance vocale conducteur (FastAPI/uvicorn)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi0123
+WorkingDirectory=/home/pi0123/DriverCustomizationThroughVoiceIdentification/src
+ExecStart=/home/pi0123/DriverCustomizationThroughVoiceIdentification/venv/bin/python3 /home/pi0123/DriverCustomizationThroughVoiceIdentification/src/api_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

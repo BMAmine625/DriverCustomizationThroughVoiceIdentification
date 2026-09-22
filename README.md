@@ -98,6 +98,85 @@ celui de la machine qui exécute `api_server.py`, pas celui du client
 connecté. Aucune donnée audio ne transite sur le réseau (seuls de petits
 messages JSON circulent).
 
+## Déploiement sur Raspberry Pi (serveur backend)
+
+Le backend (`api_server.py`) est conçu pour tourner en continu sur un
+Raspberry Pi dédié, avec démarrage automatique au boot.
+
+**Matériel testé :** Raspberry Pi 4B (2 Go RAM), OS Raspberry Pi OS
+Bookworm 64-bit (hostname `VoiceIDServer-PI`, utilisateur `pi0123`, SSH
+activé au flash via Raspberry Pi Imager).
+
+### Installation initiale
+
+```bash
+# Depuis la machine de dev : copier le projet sur le Pi
+# -L (dereference) est important pour pretrained_ecapa/, qui contient
+# des liens symboliques vers le cache HuggingFace local
+rsync -avzL DriverCustomizationThroughVoiceIdentification/ \
+  pi0123@<ip-du-pi>:~/DriverCustomizationThroughVoiceIdentification/
+
+ssh pi0123@<ip-du-pi>
+
+# Dépendances système (audio + compilation de modules Python natifs)
+sudo apt update
+sudo apt install -y portaudio19-dev libasound2-dev python3-dev
+
+# Environnement virtuel + dépendances Python (torch CPU, etc.)
+cd ~/DriverCustomizationThroughVoiceIdentification
+./setup.sh
+source venv/bin/activate
+
+# Pilotage GPIO pour l'actionneur siège
+pip install RPi.GPIO
+```
+
+**Swap** (recommandé, la RAM du Pi 4B 2 Go est juste pour compiler/charger
+torch) :
+```bash
+sudo dphys-swapfile swapoff
+sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile
+sudo dphys-swapfile setup
+sudo dphys-swapfile swapon
+```
+
+### Lancer le service au démarrage (systemd)
+
+Fichier `/etc/systemd/system/voice-driver-api.service` :
+```ini
+[Unit]
+Description=API de reconnaissance vocale conducteur (FastAPI/uvicorn)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi0123
+WorkingDirectory=/home/pi0123/DriverCustomizationThroughVoiceIdentification/src
+ExecStart=/home/pi0123/DriverCustomizationThroughVoiceIdentification/venv/bin/python3 /home/pi0123/DriverCustomizationThroughVoiceIdentification/src/api_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable voice-driver-api.service   # démarrage auto à chaque boot
+sudo systemctl start voice-driver-api.service
+
+# Statut et logs en direct
+sudo systemctl status voice-driver-api.service --no-pager
+sudo journalctl -u voice-driver-api.service -f
+
+# Redémarrer après une mise à jour du code (rsync)
+sudo systemctl restart voice-driver-api.service
+```
+
+L'app Android se connecte ensuite à `http://<ip-du-pi>:8000` (adresse
+configurable dans l'écran Settings de l'app).
+
 ## Client graphique (Kotlin / Jetpack Compose)
 
 Application autonome (`driver_ui_project/driver_ui/`) qui se connecte à

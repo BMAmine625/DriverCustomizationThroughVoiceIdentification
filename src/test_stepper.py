@@ -1,77 +1,75 @@
 """
-Test direct du moteur pas-à-pas (sans passer par la reconnaissance vocale)
-============================================================================
-Version cablage actif-bas (common-anode) : les "+" (PUL+/DIR+/ENA+) sont
-tous relies au 5V du Pi, et les GPIO pilotent les "-" (PUL-/DIR-/ENA-).
-GPIO LOW = signal actif (courant traverse l'opto), GPIO HIGH = inactif.
+Test du moteur pas-a-pas via RpiMotorLib (au lieu du code GPIO ecrit a la main)
+================================================================================
+Installation prealable sur le Pi :
+    pip install rpimotorlib[rpilgpio]
+
+But : RpiMotorLib gere le PUL (step) et le DIR via sa methode motor_go(),
+testee/utilisee par plein de monde -> permet d'eliminer un bug de logique
+dans NOTRE code de generation des pas, en gardant le cablage actif-haut
+d'origine (celui qui marchait pour ENA et pour la direction B).
+
+Cablage ACTIF-HAUT (celui d'avant le passage en actif-bas) :
+    GPIO20 (pin 38) -> terminal "PUL+"                  (PUL reel)
+    GPIO16 (pin 36) -> terminal "ENA+"  (= DIR reel)     (DIR reel)
+    GPIO21 (pin 40) -> terminal "DIR+"  (= ENA reel)     (ENA reel)
+    PUL-/ENA-(sur "ENA+")/DIR-(sur "DIR+") -> masse commune du Pi (pin 39)
+
+ENA reste gere a la main (RpiMotorLib ne le gere pas) : actif-HAUT, comme
+confirme fonctionnel precedemment.
 
 Usage :
-    python3 test_stepper.py <GPIO_PUL> <GPIO_DIR> <GPIO_ENA> [n_steps] [delay]
-
-Mapping reel confirme sur ce driver (etiquettes PUL/DIR/ENA du board ne
-correspondent pas a leur vraie fonction pour DIR/ENA) :
-    GPIO20 (pin 38) -> terminal "PUL-"                 (PUL reel)
-    GPIO16 (pin 36) -> terminal "ENA-"  (= DIR- reel)   (DIR reel)
-    GPIO21 (pin 40) -> terminal "DIR-"  (= ENA- reel)   (ENA reel)
-
-    PUL+, ENA+, DIR+ (les 3, relies ensemble) -> 5V du Pi (pin 2 ou 4)
-
-Exemple :
-    python3 test_stepper.py 20 16 21 50 0.05
+    python3 test_stepper_lib.py [n_steps] [stepdelay]
 """
 
 import sys
 import time
 
 import RPi.GPIO as GPIO
+from RpiMotorLib import RpiMotorLib
 
-if len(sys.argv) < 4:
-    print(__doc__)
-    sys.exit(1)
+GPIO_PUL = 20   # reel PUL -> step_pin pour la lib
+GPIO_DIR = 16   # reel DIR -> direction_pin pour la lib
+GPIO_ENA = 21   # reel ENA -> gere a la main, actif-HAUT
 
-GPIO_PUL = int(sys.argv[1])
-GPIO_DIR = int(sys.argv[2])
-GPIO_ENA = int(sys.argv[3])
-N_STEPS = int(sys.argv[4]) if len(sys.argv) > 4 else 50
-PULSE_DELAY = float(sys.argv[5]) if len(sys.argv) > 5 else 0.05
-
-print(f"[actif-bas] PUL -> GPIO{GPIO_PUL}, DIR -> GPIO{GPIO_DIR}, ENA -> GPIO{GPIO_ENA}")
-print(f"{N_STEPS} pas par direction, delai {PULSE_DELAY}s entre fronts.\n")
+N_STEPS = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+STEP_DELAY = float(sys.argv[2]) if len(sys.argv) > 2 else 0.02
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
-# Idle = HIGH (pas de courant), actif = LOW (courant via le 5V commun)
-GPIO.setup(GPIO_PUL, GPIO.OUT, initial=GPIO.HIGH)
-GPIO.setup(GPIO_DIR, GPIO.OUT, initial=GPIO.HIGH)
-GPIO.setup(GPIO_ENA, GPIO.OUT, initial=GPIO.LOW)  # desactive au repos (logique inversee pour test)
+GPIO.setup(GPIO_ENA, GPIO.OUT, initial=GPIO.LOW)  # desactive au repos (actif-HAUT)
+
+# mode_pins=(-1,-1,-1) : pas de broches microstep, on utilise les DIP
+# switches physiques du TB6600 (deja regles sur "1" = pas complet)
+motor = RpiMotorLib.A4988Nema(GPIO_DIR, GPIO_PUL, (-1, -1, -1), "A4988")
 
 
-def pulse(n_steps, direction, label):
-    print(f"--- {label} : {n_steps} pas, direction={'A (+)' if direction > 0 else 'B (-)'} ---")
-    GPIO.output(GPIO_ENA, GPIO.HIGH)  # INVERSE pour test -> active le driver
+def run(clockwise, label):
+    print(f"\n--- {label} : {N_STEPS} pas, clockwise={clockwise} ---")
+    GPIO.output(GPIO_ENA, GPIO.HIGH)  # active le driver
     time.sleep(0.2)
 
-    GPIO.output(GPIO_DIR, GPIO.LOW if direction > 0 else GPIO.HIGH)
-    time.sleep(0.05)
+    motor.motor_go(
+        clockwise=clockwise,
+        steptype="Full",
+        steps=N_STEPS,
+        stepdelay=STEP_DELAY,
+        verbose=True,
+        initdelay=0.05,
+    )
 
-    for i in range(n_steps):
-        GPIO.output(GPIO_PUL, GPIO.LOW)   # front actif
-        time.sleep(PULSE_DELAY)
-        GPIO.output(GPIO_PUL, GPIO.HIGH)  # retour idle
-        time.sleep(PULSE_DELAY)
-
-    GPIO.output(GPIO_ENA, GPIO.LOW)  # INVERSE pour test -> desactive
-    print("(fin)\n")
+    GPIO.output(GPIO_ENA, GPIO.LOW)  # desactive
+    print("(fin)")
 
 
 try:
-    input("Entree pour lancer le mouvement A...")
-    pulse(N_STEPS, +1, "MOUVEMENT A")
+    input("Entree pour lancer le mouvement AVANT (clockwise=True)...")
+    run(True, "MOUVEMENT AVANT")
 
-    input("Entree pour lancer le mouvement B...")
-    pulse(N_STEPS, -1, "MOUVEMENT B")
+    input("\nEntree pour lancer le mouvement ARRIERE (clockwise=False)...")
+    run(False, "MOUVEMENT ARRIERE")
 
-    print("Test termine.")
+    print("\nTest termine.")
 
 except KeyboardInterrupt:
     print("\nInterrompu.")
