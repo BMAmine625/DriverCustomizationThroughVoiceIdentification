@@ -7,6 +7,7 @@ import json
 import os
 
 from actuator_seat import get_seat_actuator
+from actuator_backrest import get_backrest_actuator
 
 
 def _load_raw(path):
@@ -137,11 +138,13 @@ def apply_preferences(driver_name, preferences):
     _print_nested(preferences, indent=1)
 
     # --- Actionneurs matériels ---------------------------------------
-    # Seul l'axe avant/arrière du siège a un moteur pas-à-pas câblé pour
-    # l'instant (Wantai 42BYGHW811 + driver TB6600, voir actuator_seat.py).
-    # Les autres axes (hauteur/inclinaison siège, volant, rétroviseurs,
-    # climatisation) restent affichage seul jusqu'à ce que leur matériel
-    # respectif soit disponible.
+    # Deux axes motorisés pour l'instant, tous les deux pilotés par le
+    # même Arduino (I2C, adresse 0x08, voir arduino_stepper_i2c_slave.ino) :
+    #   - avant/arrière du siège : moteur pas-à-pas + TB6600 (actuator_seat.py)
+    #   - inclinaison du dossier : servo standard 0-180° (actuator_backrest.py)
+    # Les autres axes (hauteur siège, volant, rétroviseurs, climatisation)
+    # restent affichage seul jusqu'à ce que leur matériel respectif soit
+    # disponible.
     seat = preferences.get("seat", {})
     if "position_avant_arriere" in seat:
         try:
@@ -150,6 +153,11 @@ def apply_preferences(driver_name, preferences):
             # Ne bloque jamais le chargement des préférences si le moteur
             # n'est pas branché/mal câblé — on log et on continue.
             print(f"[!] Actionneur siège (avant/arrière) : {e}")
+    if "inclinaison_dossier" in seat:
+        try:
+            get_backrest_actuator().move_to_angle(seat["inclinaison_dossier"])
+        except Exception as e:
+            print(f"[!] Actionneur dossier (inclinaison) : {e}")
 
 
 def _print_nested(d, indent=0):

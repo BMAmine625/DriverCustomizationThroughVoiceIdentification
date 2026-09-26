@@ -12,6 +12,13 @@ arduino_stepper_i2c_slave.ino pour le detail cote Arduino (conversion
 pourcentage -> tick d'encodeur -> pas moteur, gestion d'ENA incluse :
 le moteur n'est energise que pendant un deplacement).
 
+Protocole I2C (mis a jour pour partager le bus avec le servo du
+dossier, voir actuator_backrest.py) : 2 octets [axis, percent], avec
+axis = AXIS_SEAT pour ce module. Cote smbus2, bus.write_byte_data(addr,
+axis, percent) envoie exactement ces 2 octets - le "registre" de
+write_byte_data n'est ici qu'un premier octet ordinaire lu par
+l'Arduino, pas un vrai registre.
+
 Interface publique inchangee pour preferences.py, aucun changement
 necessaire de ce cote :
     get_seat_actuator().move_to_percent(percent)
@@ -23,6 +30,7 @@ from smbus2 import SMBus
 
 I2C_BUS = 1
 I2C_ADDRESS = 0x08  # doit correspondre a I2C_ADDRESS dans le sketch Arduino
+AXIS_SEAT = 1        # doit correspondre a AXIS_SEAT dans le sketch Arduino
 
 
 class SeatActuator:
@@ -53,7 +61,7 @@ class SeatActuator:
 
         with self._lock:
             with SMBus(self._bus_num) as bus:
-                bus.write_byte(self._address, percent)
+                bus.write_byte_data(self._address, AXIS_SEAT, percent)
 
 
 _actuator: "SeatActuator | None" = None

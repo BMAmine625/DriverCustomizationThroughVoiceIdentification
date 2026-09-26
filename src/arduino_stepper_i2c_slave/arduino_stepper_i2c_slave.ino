@@ -14,8 +14,9 @@
  *   simplement le 1er octet lu ici, pas un vrai registre).
  *   Adresse I2C esclave (inchangee) : 0x08
  *
- * ---- AXIS_SEAT : moteur pas-a-pas via TB6600 (inchange) ----
- * Cablage TB6600 (logique actif-bas) :
+ * ---- AXIS_SEAT : moteur pas-a-pas via TB6600 ----
+ * Cablage TB6600 (logique actif-bas EN THEORIE - voir ENA_ACTIVE_LOW plus
+ * bas, confirme inverse sur ce montage, donc mis a false) :
  *   PUL+, DIR+, ENA+ -> 5V de l'Arduino (fixe)
  *   D2                -> PUL-
  *   D3                -> DIR-
@@ -25,10 +26,21 @@
  *   CLK -> D4 (polling)  DT -> D5  +  -> 5V  GND -> GND
  *
  * Geometrie mecanique (mesuree) : reduction poulie 20/60 = 1/3, vis 4 filets
- * x 2mm mesure = 8mm/tour reel, course 200mm, moteur 200 pas/tour complet,
- * encodeur 20 ticks/tour de vis. Voir STEPS_PER_TICK/MAX_TICKS plus bas.
+ * x 2mm mesure = 8mm/tour reel, course 200mm, encodeur 20 ticks/tour de vis.
+ * Moteur : 1.8 deg/pas EN PLEIN PAS (200 pas/tour), mais pilote au 1/4 de pas
+ * (microstepping DIP du TB6600) -> il faut donc 200*4 = 800 impulsions PUL
+ * par tour moteur, pas 200 (MOTOR_STEPS_PER_REV ci-dessous = deja corrige en
+ * consequence - si le DIP microstep change un jour, ce nombre doit suivre).
+ * Voir STEPS_PER_TICK/MAX_TICKS plus bas.
  *
- * ---- AXIS_RECLINE : servo standard pour le dossier (NOUVEAU) ----
+ * ---- ENA : polarite confirmee inversee sur ce montage ----
+ * Diagnostique et confirme le 26/09 : le moteur etait bloque au repos et
+ * perdait le couple des qu'une commande arrivait - signature classique
+ * d'un cablage ENA+/ENA- inverse. ENA_ACTIVE_LOW est mis a false pour
+ * compenser en logiciel. Si un jour le cablage ENA est refait/corrige
+ * physiquement, remettre ENA_ACTIVE_LOW a true.
+ *
+ * ---- AXIS_RECLINE : servo standard pour le dossier ----
  * Cablage :
  *   Signal -> D9 (PWM)
  *   V+     -> alimentation 5V EXTERNE, PAS la broche 5V de l'Arduino
@@ -64,21 +76,31 @@ const int ENA_PIN = 6;
 
 const unsigned long ENA_SETTLE_MS = 5;
 
+// Confirme le 26/09 : le cablage ENA+/ENA- de ce montage est inverse par
+// rapport a la doc TB6600 standard. false compense ca en logiciel. Si le
+// cablage est un jour recorrige physiquement, remettre true.
+const bool ENA_ACTIVE_LOW = false;
+
 #ifdef USE_ENCODER
 const int ENCODER_CLK_PIN = 4;
 const int ENCODER_DT_PIN = 5;
 #endif
 
 const long TRAVEL_MM = 200;
-const long MOTOR_STEPS_PER_REV = 200;
+const long MOTOR_FULL_STEPS_PER_REV = 200;   // 1.8 deg/pas, en PLEIN PAS
+const long MICROSTEP_DIVISOR = 4;             // DIP du TB6600 regle sur 1/4 de pas
+const long MOTOR_STEPS_PER_REV = MOTOR_FULL_STEPS_PER_REV * MICROSTEP_DIVISOR; // = 800 impulsions/tour
 const long GEAR_RATIO = 3;
 const long LEAD_MM_PER_REV = 8;
 const long ENCODER_TICKS_PER_REV = 20;
 
-const long STEPS_PER_TICK = (MOTOR_STEPS_PER_REV * GEAR_RATIO) / ENCODER_TICKS_PER_REV; // = 30
+const long STEPS_PER_TICK = (MOTOR_STEPS_PER_REV * GEAR_RATIO) / ENCODER_TICKS_PER_REV; // = 120
 const long MAX_TICKS = (TRAVEL_MM * ENCODER_TICKS_PER_REV) / LEAD_MM_PER_REV;           // = 500
 
-const unsigned long STEP_INTERVAL_US = 2000;
+// Divise par MICROSTEP_DIVISOR par rapport a l'ancienne valeur (2000us) :
+// avec 4x plus d'impulsions necessaires par mm en 1/4 de pas, il faut
+// pulser 4x plus vite pour garder la meme vitesse physique du siege.
+const unsigned long STEP_INTERVAL_US = 2000 / MICROSTEP_DIVISOR; // = 500
 const unsigned long PULSE_WIDTH_US = 20;
 
 volatile long targetSteps = 0;
@@ -140,14 +162,14 @@ void onI2cReceive(int numBytes) {
 
 void enableMotor() {
   if (motorEnabled) return;
-  digitalWrite(ENA_PIN, LOW);
+  digitalWrite(ENA_PIN, ENA_ACTIVE_LOW ? LOW : HIGH);
   delay(ENA_SETTLE_MS);
   motorEnabled = true;
 }
 
 void disableMotor() {
   if (!motorEnabled) return;
-  digitalWrite(ENA_PIN, HIGH);
+  digitalWrite(ENA_PIN, ENA_ACTIVE_LOW ? HIGH : LOW);
   motorEnabled = false;
 }
 
@@ -203,7 +225,8 @@ void serviceRecline() {
 
 void setup() {
   pinMode(PUL_PIN, OUTPUT); pinMode(DIR_PIN, OUTPUT); pinMode(ENA_PIN, OUTPUT);
-  digitalWrite(PUL_PIN, HIGH); digitalWrite(DIR_PIN, HIGH); digitalWrite(ENA_PIN, HIGH);
+  digitalWrite(PUL_PIN, HIGH); digitalWrite(DIR_PIN, HIGH);
+  digitalWrite(ENA_PIN, ENA_ACTIVE_LOW ? HIGH : LOW); // repos = desenergise
 #ifdef USE_ENCODER
   pinMode(ENCODER_CLK_PIN, INPUT_PULLUP); pinMode(ENCODER_DT_PIN, INPUT_PULLUP);
 #endif

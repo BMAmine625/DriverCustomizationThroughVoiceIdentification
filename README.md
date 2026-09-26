@@ -127,8 +127,9 @@ cd ~/DriverCustomizationThroughVoiceIdentification
 ./setup.sh
 source venv/bin/activate
 
-# Pilotage GPIO pour l'actionneur siège
-pip install RPi.GPIO
+# Communication I2C avec l'Arduino (actionneurs siège/dossier)
+pip install smbus2
+sudo raspi-config   # Interface Options -> I2C -> Enable, puis reboot
 ```
 
 **Swap** (recommandé, la RAM du Pi 4B 2 Go est juste pour compiler/charger
@@ -233,6 +234,87 @@ tourne sur l'émulateur Automotive confirme la compatibilité technique, mais
 une adaptation aux templates serait nécessaire pour une distribution
 officielle.
 
+## Matériel — actionneurs (Raspberry Pi ↔ Arduino)
+
+Deux axes du siège sont réellement motorisés, tous les deux pilotés par un
+**Arduino Nano** (logique 5V) connecté au Raspberry Pi en **I2C**. Le Pi
+n'effectue aucun calcul de position : il envoie juste un pourcentage cible,
+l'Arduino s'occupe de toute la conversion et du pilotage bas niveau.
+
+| Axe | Actionneur | Piloté par |
+|---|---|---|
+| Siège avant/arrière | Moteur pas-à-pas + driver TB6600 | Arduino (impulsions PUL/DIR/ENA) |
+| Inclinaison du dossier | Servomoteur standard 0–180° | Arduino (`Servo.h`) |
+| Position réelle de la vis (siège) | Encodeur rotatif incrémental KY-040 | Arduino (lecture par polling) |
+
+### Câblage
+
+**Pi → Arduino (I2C)**
+| Pi | Arduino |
+|---|---|
+| SDA (GPIO2, pin 3) | SDA |
+| SCL (GPIO3, pin 5) | SCL |
+| GND | GND (masse commune obligatoire) |
+
+Adresse I2C de l'Arduino : `0x08`.
+
+**Arduino → TB6600** (logique actif-bas)
+| TB6600 | Arduino |
+|---|---|
+| PUL+, DIR+, ENA+ | 5V (fixe) |
+| PUL− | D2 |
+| DIR− | D3 |
+| ENA− | D6 |
+
+Le moteur pas-à-pas et le TB6600 ont leur propre alimentation (tension/
+courant moteur), séparée du 5V logique de l'Arduino.
+
+**Arduino → Servo (dossier)**
+| Servo | Arduino / alimentation |
+|---|---|
+| Signal | D9 |
+| V+ | Alimentation 5V dédiée (pas la broche 5V de l'Arduino) |
+| GND | Masse commune avec l'Arduino |
+
+**Arduino → Encodeur KY-040** (monté sur la vis du siège)
+| KY-040 | Arduino |
+|---|---|
+| CLK | D4 |
+| DT | D5 |
+| + | 5V |
+| GND | GND |
+
+### Protocole I2C
+
+Le Pi envoie 2 octets par commande : `[axis, percent]`.
+- `axis = 1` (siège) ou `axis = 2` (dossier)
+- `percent` = 0–100 (pourcentage de course pour le siège, pourcentage
+  d'angle pour le dossier)
+
+L'Arduino convertit ensuite ce pourcentage en position réelle (ticks
+d'encodeur → pas moteur pour le siège, angle direct pour le servo) et pilote
+le déplacement de façon autonome, sans intervention supplémentaire du Pi.
+
+### Fichiers concernés
+
+| Fichier | Rôle |
+|---|---|
+| `arduino_stepper_i2c_slave.ino` | Firmware Arduino : esclave I2C, pilotage du moteur pas-à-pas (TB6600 + encodeur KY-040) et du servo du dossier |
+| `actuator_seat.py` | Pont I2C côté Pi pour l'axe avant/arrière du siège |
+| `actuator_backrest.py` | Pont I2C côté Pi pour l'inclinaison du dossier (conversion degrés ↔ pourcentage) |
+| `preferences.py` | Appelle les deux actionneurs depuis `apply_preferences()` dès qu'un conducteur est identifié |
+
+### Géométrie mécanique (siège)
+
+- Réduction poulie moteur/vis : 1/3
+- Vis à 4 filets, lead réel 8 mm/tour
+- Course totale : 200 mm
+- Moteur piloté au 1/4 de pas (microstepping TB6600)
+- Encodeur KY-040 : 20 ticks/tour de vis
+
+Ces constantes vivent dans `arduino_stepper_i2c_slave.ino` et peuvent être
+ajustées si la mécanique change.
+
 ## Structure des préférences (`preferences.json`)
 
 | Catégorie | Champ | Unité | Plage |
@@ -276,12 +358,11 @@ API) s'adapte automatiquement.
   retenue comme travaux futurs, au même titre que la reconnaissance
   faciale.
 - **Parole simultanée** : pas de séparation de locuteurs.
-- **Application matérielle des préférences** : `apply_preferences()` ne
-  fait qu'un affichage simulé côté serveur — aucun actionneur réel n'est
-  encore branché. Du matériel (actionneurs) doit être fourni par
-  l'encadrant ; leur nombre et leur nature exacts restent à confirmer.
-  Le point d'intégration est déjà identifié dans le code (`preferences.py`,
-  commentaire `TODO actionneur`).
+- **Application matérielle des préférences** : deux axes sont réellement
+  motorisés (siège avant/arrière, inclinaison du dossier — voir section
+  Matériel plus haut). Les autres axes (hauteur du siège, volant,
+  rétroviseurs, climatisation) restent un affichage simulé côté serveur,
+  en l'attente d'actionneurs supplémentaires.
 - **Conformité Android Automotive officielle** : l'app ne suit pas les
   templates de la Car App Library (choix délibéré pour ce PFA, voir plus
   haut) — une vraie distribution sur le Play Store automobile
