@@ -10,6 +10,7 @@ import queue
 import signal
 import tempfile
 import threading
+import time
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -233,16 +234,28 @@ async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)
 # ======================================================================
 
 @app.websocket("/ws/identify")
-async def ws_identify(websocket: WebSocket, adapt: bool = Query(False)):
+async def ws_identify(websocket: WebSocket, adapt: bool = Query(False), levels: bool = Query(False)):
     await websocket.accept()
 
     result_queue = queue.Queue()
     stop_event = threading.Event()
 
+    last_level_sent = [0.0]
+    LEVEL_PERIOD = 0.05   # ~20 messages/s max
+
+    def on_level(rms, speaking):
+        now = time.monotonic()
+        if now - last_level_sent[0] >= LEVEL_PERIOD:
+            last_level_sent[0] = now
+            result_queue.put({"type": "level", "rms": round(rms, 4), "speaking": speaking})
+
     def worker():
         all_prefs = load_preferences(PREFERENCES_PATH)
         try:
-            for segment in speech_segments(stop_event=stop_event):
+            for segment in speech_segments(
+                stop_event=stop_event,
+                on_level=on_level if levels else None,
+            ):
                 with enrolled_lock:
                     if adapt:
                         speaker, score, scores, adapted = identify_and_adapt_array(
