@@ -124,15 +124,22 @@ class ApiClient(private val host: String) {
     fun connectIdentifyWebSocket(
         onEvent: (IdentifyEvent) -> Unit,
         onFailure: (String) -> Unit,
+        onLevel: ((rms: Float, speaking: Boolean) -> Unit)? = null,
     ): WebSocket {
+        // levels=true : le serveur envoie aussi {"type":"level","rms":..,"speaking":..} (~20 Hz) pour la forme d'onde
+        val levelsParam = if (onLevel != null) "&levels=true" else ""
         val request = Request.Builder()
-            .url("${wsBaseUrl()}/ws/identify?adapt=false")
+            .url("${wsBaseUrl()}/ws/identify?adapt=false$levelsParam")
             .build()
 
         return client.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val json = JSONObject(text)
+                    if (json.optString("type") == "level") {
+                        onLevel?.invoke(json.getDouble("rms").toFloat(), json.optBoolean("speaking", false))
+                        return
+                    }
                     if (json.has("error")) {
                         onFailure(json.getString("error"))
                         return

@@ -8,14 +8,14 @@ plugins {
 
 android {
     namespace = "com.pfa.driverui"
-    compileSdk = 34
+    compileSdk = 37            // required by SceneView 4.x (AGP 8.13.2 is enough)
 
     defaultConfig {
         applicationId = "com.pfa.driverui"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.2.0"
+        versionName = "0.3.0"
     }
 
     buildFeatures {
@@ -41,8 +41,11 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")   // Mic icon (replaces icons-core)
 
     // Client réseau (REST + WebSocket) pour communiquer avec api_server.py
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // 3D (Filament) : voiture Camry dans app/src/main/assets/camry.glb
+    implementation("io.github.sceneview:sceneview:4.54.0")
 }

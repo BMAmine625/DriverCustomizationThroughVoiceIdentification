@@ -1,70 +1,53 @@
 package com.pfa.driverui.ui
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * Blank listening screen: prompts the driver to speak, with a pulsing
- * indicator while waiting, and a status line for transient messages
- * (e.g. "not recognized" or connection errors).
+ * Overlay of the identification screen, drawn over the blurred 3D car: mic icon + waveform (flat at rest,
+ * animated when someone speaks) and a status line. [alpha] lets the caller fade it out after identification.
  */
 @Composable
-fun ListeningScreen(statusMessage: String?, modifier: Modifier = Modifier) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "pulseScale",
-    )
-
+fun ListeningScreen(
+    statusMessage: String?,
+    audioLevel: Float,
+    modifier: Modifier = Modifier,
+    alpha: Float = 1f,
+) {
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().alpha(alpha),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(110.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .graphicsLayer {
-                        scaleX = pulseScale
-                        scaleY = pulseScale
-                    }
-                    .background(MaterialTheme.colorScheme.primary, CircleShape),
-            )
-        }
+        Icon(
+            imageVector = Icons.Filled.Mic,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(64.dp),
+        )
+        VoiceWaveform(
+            level = audioLevel,
+            modifier = Modifier.padding(top = 24.dp).width(420.dp),
+        )
         Text(
             text = "Please speak to identify yourself",
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = Color.White,
             modifier = Modifier.padding(top = 24.dp),
         )
         if (statusMessage != null) {
