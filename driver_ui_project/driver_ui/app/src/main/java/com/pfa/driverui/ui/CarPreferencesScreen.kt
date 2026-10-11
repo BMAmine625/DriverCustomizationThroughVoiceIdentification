@@ -1,83 +1,65 @@
 package com.pfa.driverui.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pfa.driverui.model.DriverPreferences
-import com.pfa.driverui.scene.CarView
+import com.pfa.driverui.ui.theme.CarGlass
+import com.pfa.driverui.ui.theme.CarOnDark
+import com.pfa.driverui.ui.theme.CarOutline
+import com.pfa.driverui.ui.theme.CarTeal
 
 /**
- * Overlay on top of the sharp 3D car: driver name, camera view chips (the camera glides between views),
- * a permanent climate band at the bottom, and the "identify another driver" button.
+ * Overlay on top of the sharp 3D car after identification: the driver's name, the "identify another driver" button,
+ * and the permanent climate band at the bottom (read-only here, it is edited in the settings).
  */
 @Composable
 fun CarPreferencesScreen(
     driverName: String,
     preferences: DriverPreferences,
-    view: CarView,
-    onViewChange: (CarView) -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "DRIVER PREFERENCES",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = "Identified: $driverName",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            OutlinedButton(onClick = onDone) { Text("Identify another driver") }
-        }
-
-        Column(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.End,
-        ) {
-            CarView.entries.forEach { v ->
-                FilterChip(
-                    selected = v == view,
-                    onClick = { onViewChange(v) },
-                    label = { Text(v.label) },
-                )
-            }
-        }
-
-        // Permanent climate band
         Surface(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+            color = CarGlass,
+            shape = RoundedCornerShape(50),
+            border = BorderStroke(1.dp, CarOutline.copy(alpha = 0.7f)),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(start = 16.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                ClimateView(preferences = preferences.climate)
+                Box(Modifier.size(9.dp).clip(CircleShape).background(CarTeal))
+                Text(driverName, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = CarOnDark)
+                TextButton(onClick = onDone) { Text("Identify another driver", color = CarTeal, fontSize = 13.sp) }
             }
         }
+
+        ClimateBand(
+            climate = preferences.climate,
+            editable = false,
+            onChange = {},
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+        )
     }
 }
