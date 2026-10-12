@@ -8,23 +8,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 
+/** Welcome text drawn over the (still blurred) 3D car; [alpha] is driven by the transition timeline. */
 @Composable
-fun IdentifiedScreen(driverName: String, modifier: Modifier = Modifier) {
+fun IdentifiedScreen(driverName: String, modifier: Modifier = Modifier, alpha: Float = 1f) {
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().alpha(alpha),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
             text = "Welcome, $driverName",
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            text = "Loading your preferences…",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.displayMedium,
+            color = Color.White,
         )
     }
 }

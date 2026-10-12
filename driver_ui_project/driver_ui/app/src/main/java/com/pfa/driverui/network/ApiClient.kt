@@ -124,15 +124,23 @@ class ApiClient(private val host: String) {
     fun connectIdentifyWebSocket(
         onEvent: (IdentifyEvent) -> Unit,
         onFailure: (String) -> Unit,
+        onLevel: ((rms: Float, speaking: Boolean) -> Unit)? = null,
     ): WebSocket {
+        // levels=true : le serveur envoie aussi {"type":"level","rms":..,"speaking":..} (~20 Hz) pour la forme d'onde.
+        // Pas de paramètre adapt : le serveur applique l'option "adaptation automatique" de chaque conducteur.
+        val levelsParam = if (onLevel != null) "?levels=true" else ""
         val request = Request.Builder()
-            .url("${wsBaseUrl()}/ws/identify?adapt=false")
+            .url("${wsBaseUrl()}/ws/identify$levelsParam")
             .build()
 
         return client.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val json = JSONObject(text)
+                    if (json.optString("type") == "level") {
+                        onLevel?.invoke(json.getDouble("rms").toFloat(), json.optBoolean("speaking", false))
+                        return
+                    }
                     if (json.has("error")) {
                         onFailure(json.getString("error"))
                         return
@@ -179,10 +187,12 @@ class ApiClient(private val host: String) {
         samples: Int,
         onEvent: (EnrollEvent) -> Unit,
         onFailure: (String) -> Unit,
+        replace: Boolean = false,   // true : les nouveaux échantillons remplacent les anciens (une fois tous enregistrés)
     ): WebSocket {
         val encodedName = URLEncoder.encode(driverName, "UTF-8")
+        val replaceParam = if (replace) "&replace=true" else ""
         val request = Request.Builder()
-            .url("${wsBaseUrl()}/ws/enroll?driver_name=$encodedName&samples=$samples")
+            .url("${wsBaseUrl()}/ws/enroll?driver_name=$encodedName&samples=$samples$replaceParam")
             .build()
 
         return client.newWebSocket(request, object : WebSocketListener() {
@@ -238,6 +248,84 @@ class ApiClient(private val host: String) {
                         list.add(array.getString(i))
                     }
                     onResult(list)
+                }
+            }
+        })
+    }
+
+    /** Options d'un conducteur : adaptation automatique du profil + nombre d'échantillons audio conservés. */
+    fun fetchOptions(
+        driverName: String,
+        onResult: (adapt: Boolean, samples: Int) -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        val request = Request.Builder().url("${restBaseUrl()}/drivers/${URLEncoder.encode(driverName, "UTF-8").replace("+", "%20")}/options").build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                onError(e.message ?: "Erreur réseau")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!it.isSuccessful) {
+                        onError("Erreur serveur (${it.code})")
+                        return
+                    }
+                    try {
+                        val json = JSONObject(it.body?.string() ?: "{}")
+                        onResult(json.optBoolean("adapt", false), json.optInt("samples", 0))
+                    } catch (e: JSONException) {
+                        onError("Réponse invalide du serveur : ${e.message}")
+                    }
+                }
+            }
+        })
+    }
+
+    fun setAdapt(driverName: String, adapt: Boolean, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val body = JSONObject().put("adapt", adapt).toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("${restBaseUrl()}/drivers/${URLEncoder.encode(driverName, "UTF-8").replace("+", "%20")}/options")
+            .put(body)
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                onError(e.message ?: "Erreur réseau")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!it.isSuccessful) {
+                        onError("Erreur serveur (${it.code}) : ${it.body?.string()}")
+                        return
+                    }
+                    onSuccess()
+                }
+            }
+        })
+    }
+
+    /** Ré-enrôle depuis les échantillons déjà enregistrés (peut prendre quelques secondes sur le Pi). */
+    fun reenroll(driverName: String, onSuccess: (samples: Int) -> Unit, onError: (String) -> Unit) {
+        val request = Request.Builder()
+            .url("${restBaseUrl()}/drivers/${URLEncoder.encode(driverName, "UTF-8").replace("+", "%20")}/reenroll")
+            .post("".toRequestBody(null))
+            .build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                onError(e.message ?: "Erreur réseau")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val text = it.body?.string()
+                    if (!it.isSuccessful) {
+                        val detail = try { JSONObject(text ?: "").optString("detail") } catch (e: JSONException) { "" }
+                        onError(if (detail.isNotBlank()) detail else "Erreur serveur (${it.code})")
+                        return
+                    }
+                    val samples = try { JSONObject(text ?: "{}").optInt("samples_total", 0) } catch (e: JSONException) { 0 }
+                    onSuccess(samples)
                 }
             }
         })

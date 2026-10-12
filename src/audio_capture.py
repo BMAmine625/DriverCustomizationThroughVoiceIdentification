@@ -47,7 +47,7 @@ def _native_input_samplerate() -> int:
     return int(device_info["default_samplerate"])
 
 
-def speech_segments(stop_event=None):
+def speech_segments(stop_event=None, on_level=None):
     """
     Générateur infini : capture le micro et "yield" un segment de parole
     (np.array 1D, float32, à SAMPLE_RATE) à chaque fois qu'une phrase
@@ -56,6 +56,11 @@ def speech_segments(stop_event=None):
     stop_event : threading.Event optionnel. Si fourni et déclenché
     (stop_event.set()), le générateur s'arrête proprement et ferme le
     flux micro.
+
+    on_level : callback optionnel on_level(rms: float, speaking: bool),
+    appelé pour chaque bloc de 30 ms capturé (thread du générateur). Sert
+    à afficher une forme d'onde côté interface ; l'appelant doit rester
+    rapide (et limiter la cadence s'il envoie sur le réseau).
 
     Usage :
         for segment in speech_segments():
@@ -89,7 +94,14 @@ def speech_segments(stop_event=None):
             except queue.Empty:
                 continue
 
-            if is_speech(block):
+            speaking = is_speech(block)
+            if on_level is not None:
+                try:
+                    on_level(float(np.sqrt(np.mean(block ** 2))), bool(speaking))
+                except Exception:
+                    pass   # un callback défaillant ne doit pas casser la capture
+
+            if speaking:
                 speech_buffer.append(block)
                 silence_duration = 0.0
             else:
