@@ -1,160 +1,66 @@
-# Système de reconnaissance vocale pour personnalisation des préférences conducteur
+# Reconnaissance vocale du conducteur — personnalisation automatique du poste de conduite
 
-Identification du conducteur par sa voix, pour charger automatiquement ses
-préférences véhicule (siège, volant, rétroviseurs, climatisation), avec un
-service backend Python et un client graphique Kotlin/Jetpack Compose.
+Projet de Fin d'Année (ENSAF, filière ISEIA). Le système identifie le
+conducteur par sa voix et applique ses préférences (siège, dossier, volant,
+rétroviseurs, climatisation). Il se compose d'un **serveur Python** (FastAPI,
+Raspberry Pi 4B), d'un **Arduino** qui pilote les actionneurs du siège et d'une
+**application Android Automotive** (Kotlin / Jetpack Compose) avec une scène 3D
+du véhicule.
 
-## Installation (backend Python)
-
-Une seule commande, depuis la racine du projet :
-
-```bash
-./setup.sh
+```
+Micro USB ─► Raspberry Pi (VAD + ECAPA-TDNN + API REST/WebSocket) ─► Application Android Automotive
+                    │ I2C
+                    ▼
+              Arduino Nano ─► moteur pas-à-pas (siège) + servomoteur (dossier)
 ```
 
-Ce script crée un environnement virtuel Python, installe `torch`/`torchaudio`
-en version CPU (nécessaire pour éviter des conflits CUDA), puis toutes les
-autres dépendances (dont l'API).
+## Fonctionnement
+
+- **Identification** : détection de parole (VAD), embedding ECAPA-TDNN
+  pré-entraîné (SpeechBrain, 192 valeurs), similarité cosinus avec les profils
+  enrôlés. Seuil d'acceptation 0,60 ; en dessous, le locuteur est « inconnu » et
+  aucune préférence n'est chargée.
+- **Amélioration automatique du profil** (option, désactivée par défaut, réglée
+  par conducteur) : si le score dépasse 0,75, le profil est mis à jour par
+  moyenne mobile (α = 0,1).
+- **Enrôlement** au micro du serveur, avec reprise possible : *Re-enroll* (refait
+  le profil à partir des enregistrements conservés) et *Record again* (remplace
+  les enregistrements, uniquement une fois tous les nouveaux échantillons pris).
+- **Méthode de référence** MFCC + GMM, pour comparaison avec ECAPA-TDNN.
+
+## Installation du serveur
 
 ```bash
+./setup.sh              # venv, torch CPU, dépendances
 source venv/bin/activate
+cd src && uvicorn api_server:app --host 0.0.0.0 --port 8000
 ```
 
-## Structure du projet
+Documentation interactive : `http://<hôte>:8000/docs`. Le microphone utilisé est
+celui de la machine qui exécute le serveur ; seuls de petits messages JSON
+transitent sur le réseau.
 
-```
-dataset/          Échantillons audio d'enrôlement (.wav), un dossier par conducteur
-test_samples/     Échantillons de test (jamais utilisés pour l'enrôlement)
-models/           Modèles / embeddings sauvegardés (générés automatiquement)
-pretrained_ecapa/ Cache du modèle ECAPA-TDNN pré-entraîné (généré au 1er lancement)
-preferences.json  Préférences par conducteur (siège, volant, rétroviseurs, climatisation)
-src/              Scripts Python (identification, enrôlement, API)
-driver_ui_project/driver_ui/  Client graphique Kotlin/Jetpack Compose
-```
-
-## Fonctionnalités (backend)
-
-- **Deux approches d'identification** : baseline classique (MFCC + GMM) et
-  approche principale par deep learning (ECAPA-TDNN pré-entraîné, via
-  SpeechBrain), pour comparaison empirique dans le rapport.
-- **Enrôlement et identification séparés**, avec adaptation incrémentale des
-  profils sur identification très confiante.
-- **API REST + WebSocket** (`api_server.py`) exposant l'identification, la
-  gestion complète des profils (créer, lire, modifier, **renommer**,
-  **supprimer**), et les préférences, pour un client externe.
-- **Préférences en JSON**, schéma extensible (`_schema`), validées côté
-  serveur avec bornes explicites.
-- **Outils de diagnostic audio** pour repérer les enregistrements
-  problématiques avant qu'ils ne faussent les résultats.
-
-## Structure du code (`src/`)
-
-| Fichier | Rôle |
-|---|---|
-| `common.py` | Chargement du modèle ECAPA-TDNN, extraction d'embedding, similarité cosinus |
-| `audio_capture.py` | Capture micro continue + VAD, partagée par le streaming, l'enrôlement et l'API |
-| `enrollment.py` | Enrôlement à partir de fichiers `.wav` déjà présents |
-| `auto_enroll.py` | Enrôlement automatique au micro (terminal) |
-| `identification.py` | Identification sur fichier, adaptation incrémentale |
-| `streaming_identification.py` | Identification en direct (terminal) |
-| `preferences.py` | Chargement/sauvegarde/validation des préférences JSON, suppression et renommage d'un profil |
-| `configure_preferences.py` | Configure les préférences d'un conducteur (terminal) |
-| `record_test_sample.py` | Enregistre un échantillon de test propre |
-| `diagnose_samples.py` | Diagnostic de qualité audio |
-| `gmm_mfcc_identification.py` | Baseline classique MFCC + GMM |
-| `api_server.py` | Service FastAPI : identification et gestion complète des profils via REST/WebSocket |
-| `test_ws_client.py` | Client de test en ligne de commande pour les WebSockets |
-
-## API — endpoints
-
-**REST :**
-
-| Méthode | Route | Rôle |
-|---|---|---|
-| GET | `/health` | Vérifie que le service et le modèle sont chargés |
-| GET | `/drivers` | Liste les conducteurs enrôlés |
-| DELETE | `/drivers/{name}` | Supprime un conducteur (profil vocal, préférences, échantillons audio) |
-| POST | `/drivers/{old_name}/rename?new_name=...` | Renomme un conducteur (profil vocal, préférences, dossier d'échantillons) |
-| GET | `/preferences/schema` | Schéma des préférences (catégories, unités, bornes) |
-| GET | `/preferences/{name}` | Préférences d'un conducteur (404 si inconnu) |
-| PUT | `/preferences/{name}` | Enregistre des préférences (validées, 422 si hors plage) |
-| POST | `/identify` | Identifie un conducteur à partir d'un fichier audio envoyé |
-
-**WebSocket (flux continu, micro du serveur) :**
-
-| Route | Rôle |
-|---|---|
-| `/ws/identify` | Pousse un résultat d'identification à chaque phrase détectée |
-| `/ws/enroll` | Enrôle un conducteur au micro, avec progression en direct |
-
-**Lancer le service :**
-```bash
-uvicorn api_server:app --host 0.0.0.0 --port 8000
-```
-Documentation interactive : `http://<host>:8000/docs`.
-
-**Important :** le microphone utilisé par `/ws/identify` et `/ws/enroll` est
-celui de la machine qui exécute `api_server.py`, pas celui du client
-connecté. Aucune donnée audio ne transite sur le réseau (seuls de petits
-messages JSON circulent).
-
-## Déploiement sur Raspberry Pi (serveur backend)
-
-Le backend (`api_server.py`) est conçu pour tourner en continu sur un
-Raspberry Pi dédié, avec démarrage automatique au boot.
-
-**Matériel testé :** Raspberry Pi 4B (2 Go RAM), OS Raspberry Pi OS
-Bookworm 64-bit (hostname `VoiceIDServer-PI`, utilisateur `pi0123`, SSH
-activé au flash via Raspberry Pi Imager).
-
-### Installation initiale
+### Déploiement sur Raspberry Pi 4B (Raspberry Pi OS 64 bits)
 
 ```bash
-# Depuis la machine de dev : copier le projet sur le Pi
-# -L (dereference) est important pour pretrained_ecapa/, qui contient
-# des liens symboliques vers le cache HuggingFace local
-rsync -avzL DriverCustomizationThroughVoiceIdentification/ \
-  pi0123@<ip-du-pi>:~/DriverCustomizationThroughVoiceIdentification/
-
-ssh pi0123@<ip-du-pi>
-
-# Dépendances système (audio + compilation de modules Python natifs)
-sudo apt update
 sudo apt install -y portaudio19-dev libasound2-dev python3-dev
-
-# Environnement virtuel + dépendances Python (torch CPU, etc.)
-cd ~/DriverCustomizationThroughVoiceIdentification
-./setup.sh
-source venv/bin/activate
-
-# Communication I2C avec l'Arduino (actionneurs siège/dossier)
-pip install smbus2
-sudo raspi-config   # Interface Options -> I2C -> Enable, puis reboot
+./setup.sh && pip install smbus2
+sudo raspi-config        # Interface Options -> I2C -> Enable, puis redémarrer
 ```
 
-**Swap** (recommandé, la RAM du Pi 4B 2 Go est juste pour compiler/charger
-torch) :
-```bash
-sudo dphys-swapfile swapoff
-sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=1024/' /etc/dphys-swapfile
-sudo dphys-swapfile setup
-sudo dphys-swapfile swapon
-```
+Un swap de 1 Go est recommandé (2 Go de RAM). Pour un démarrage automatique,
+créer `/etc/systemd/system/voice-driver-api.service` :
 
-### Lancer le service au démarrage (systemd)
-
-Fichier `/etc/systemd/system/voice-driver-api.service` :
 ```ini
 [Unit]
-Description=API de reconnaissance vocale conducteur (FastAPI/uvicorn)
+Description=API de reconnaissance vocale conducteur
 After=network-online.target sound.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-User=pi0123
-WorkingDirectory=/home/pi0123/DriverCustomizationThroughVoiceIdentification/src
-ExecStart=/home/pi0123/DriverCustomizationThroughVoiceIdentification/venv/bin/python3 /home/pi0123/DriverCustomizationThroughVoiceIdentification/src/api_server.py
+User=<utilisateur>
+WorkingDirectory=<projet>/src
+ExecStart=<projet>/venv/bin/python3 <projet>/src/api_server.py
 Restart=on-failure
 RestartSec=5
 
@@ -163,207 +69,94 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable voice-driver-api.service   # démarrage auto à chaque boot
-sudo systemctl start voice-driver-api.service
-
-# Statut et logs en direct
-sudo systemctl status voice-driver-api.service --no-pager
-sudo journalctl -u voice-driver-api.service -f
-
-# Redémarrer après une mise à jour du code (rsync)
-sudo systemctl restart voice-driver-api.service
+sudo systemctl daemon-reload && sudo systemctl enable --now voice-driver-api.service
+sudo journalctl -u voice-driver-api.service -f      # logs
 ```
 
-L'app Android se connecte ensuite à `http://<ip-du-pi>:8000` (adresse
-configurable dans l'écran Settings de l'app).
+## API
 
-## Client graphique (Kotlin / Jetpack Compose)
-
-Application autonome (`driver_ui_project/driver_ui/`) qui se connecte à
-`api_server.py` en REST/WebSocket. Statut : flux complet testé et validé
-(identification, création de profil avec enrôlement vocal intégré,
-modification, renommage, suppression).
-
-### Écrans
-
-- **Listening** : écran d'accueil, invite à parler, connecté en continu à
-  `/ws/identify` ; affiche un message si le conducteur n'est pas reconnu.
-- **Identified** : transition brève affichant le nom du conducteur reconnu.
-- **Preferences** (`CarPreferencesScreen`) : affichage animé des 4
-  catégories (siège, volant, rétroviseurs x3, climatisation) selon les
-  préférences reçues ; bouton pour revenir à l'écoute.
-- **Settings** (icône engrenage, accessible depuis n'importe quel écran) :
-  - configuration de l'adresse du serveur (persistée)
-  - liste des profils enrôlés
-  - créer un profil : saisie du nom → enrôlement vocal via `/ws/enroll`
-    (progression en direct) → formulaire de préférences pré-rempli
-  - modifier un profil : formulaire avec aperçu visuel en direct
-    (les vues siège/volant/rétroviseurs/climatisation s'animent pendant la
-    saisie) et boutons -/+ en plus de la saisie au clavier
-  - renommer un profil (déplace profil vocal + préférences + dossier
-    d'échantillons côté serveur)
-  - supprimer un profil, avec confirmation
-
-### Structure du code (`app/src/main/java/com/pfa/driverui/`)
-
-| Fichier | Rôle |
-|---|---|
-| `model/PreferencesModels.kt` | Classes de données reflétant le schéma serveur |
-| `network/ApiClient.kt` | Client REST + WebSocket (OkHttp), parsing JSON, delete/rename |
-| `network/ServerConfig.kt` | Adresse du serveur persistée (SharedPreferences) |
-| `ui/theme/Theme.kt` | Palette sombre, style tableau de bord automobile |
-| `ui/SeatView.kt` / `SteeringWheelView.kt` / `MirrorView.kt` / `ClimateView.kt` | Rendus animés par catégorie |
-| `ui/ListeningScreen.kt` / `IdentifiedScreen.kt` / `CarPreferencesScreen.kt` | Écrans du flux principal |
-| `ui/SettingsScreen.kt` | Gestion des profils (créer/modifier/renommer/supprimer) |
-| `ui/AppScreen.kt` / `DriverApp.kt` | État de navigation et orchestration (connexion WebSocket, overlay du bouton réglages) |
-| `data/MockPreferencesRepository.kt` | Données de test hors-ligne, non utilisées dans le flux principal |
-
-### Environnement de test
-
-Testé sur l'émulateur Android Automotive avec Google Play (image
-"Automotive Distant Display with Google Play", Android 13 "Tiramisu",
-x86_64) fourni par Android Studio.
-
-Note importante : l'application est actuellement une app Compose classique
-(interface libre), pas une app conforme à la Car App Library imposée par
-Google pour la distribution officielle sur le Play Store automobile (qui
-impose des templates prédéfinis pour limiter la distraction au volant). Ce
-choix est délibéré pour ce PFA — voir limitations plus bas. Le fait qu'elle
-tourne sur l'émulateur Automotive confirme la compatibilité technique, mais
-une adaptation aux templates serait nécessaire pour une distribution
-officielle.
-
-## Matériel — actionneurs (Raspberry Pi ↔ Arduino)
-
-Deux axes du siège sont réellement motorisés, tous les deux pilotés par un
-**Arduino Nano** (logique 5V) connecté au Raspberry Pi en **I2C**. Le Pi
-n'effectue aucun calcul de position : il envoie juste un pourcentage cible,
-l'Arduino s'occupe de toute la conversion et du pilotage bas niveau.
-
-| Axe | Actionneur | Piloté par |
+| Méthode | Route | Rôle |
 |---|---|---|
-| Siège avant/arrière | Moteur pas-à-pas + driver TB6600 | Arduino (impulsions PUL/DIR/ENA) |
-| Inclinaison du dossier | Servomoteur standard 0–180° | Arduino (`Servo.h`) |
-| Position réelle de la vis (siège) | Encodeur rotatif incrémental KY-040 | Arduino (lecture par polling) |
+| GET | `/health` | État du service et du modèle |
+| GET | `/drivers` | Conducteurs enrôlés |
+| DELETE | `/drivers/{name}` | Supprime profil vocal, préférences et échantillons |
+| POST | `/drivers/{old}/rename?new_name=` | Renomme un conducteur |
+| GET / PUT | `/drivers/{name}/options` | Options du conducteur (amélioration automatique) |
+| POST | `/drivers/{name}/reenroll` | Refait le profil à partir des audios conservés |
+| GET | `/preferences/schema` | Catégories, unités et bornes |
+| GET / PUT | `/preferences/{name}` | Lit / enregistre les préférences (validées, 422 hors plage) |
+| POST | `/identify` | Identifie à partir d'un fichier audio |
+| WS | `/ws/identify` | Un résultat par phrase détectée (`levels=true` : niveaux sonores pour la forme d'onde ; `adapt` : force l'option) |
+| WS | `/ws/enroll` | Enrôlement au micro, progression en direct (`replace=true` : *Record again*) |
 
-### Câblage
+Les préférences sont validées côté serveur avec les bornes du schéma
+(`preferences.json`) : siège avant/arrière et hauteur 0–100 %, dossier 90–160°,
+volant 0–100 %, rétroviseurs ±30° / ±20°, climatisation 16–30 °C et ventilation 1–7.
 
-**Pi → Arduino (I2C)**
-| Pi | Arduino |
+## Application Android Automotive
+
+Dossier `kotlin-app/` (paquet `com.pfa.driverui`). Écrans : écoute (scène 3D
+floutée, forme d'onde), identification, préférences (scène nette, bande de
+climatisation), réglages (profils, création avec enrôlement vocal, édition en
+touchant les pièces du véhicule, renommage, suppression, option d'amélioration
+automatique, Re-enroll / Record again, adresse du serveur) et **Customize view**
+(appui long sur l'engrenage) pour régler caméras et repères tactiles de la scène.
+
+Testée sur l'émulateur *Automotive Distant Display with Google Play* (Android 13).
+La scène est un modèle glTF 2.0 rendu avec Filament / SceneView.
+
+**Plateformes.** Le client n'a été développé que pour les véhicules **Android**
+(Android Automotive). Le serveur ne dépend d'aucun client (REST/WebSocket, JSON) :
+un client **iOS (CarPlay)** ou pour toute autre plateforme peut être réalisé sans
+modifier le serveur.
+
+## Matériel : actionneurs
+
+Le Pi envoie à l'Arduino Nano (esclave I2C, adresse `0x08`) deux octets
+`[axe, pourcentage]` : `1` = siège avant/arrière, `2` = inclinaison du dossier.
+L'Arduino convertit et pilote seul le mouvement.
+
+| Axe | Actionneur | Broches Arduino |
+|---|---|---|
+| Siège | Moteur pas-à-pas 42BYGHW811 + TB6600 (1/4 de pas) | PUL− D2, DIR− D3, ENA− D6 (PUL+/DIR+/ENA+ au 5 V) |
+| Dossier | Servomoteur, 90–160° | Signal D9, alimentation 5 V dédiée |
+| Position (prévu) | Encodeur KY-040 sur la vis | CLK D4, DT D5 |
+
+Liaison I2C : SDA (GPIO2) – SDA, SCL (GPIO3) – SCL, masse commune obligatoire.
+Mécanique du siège : réduction 1/3, vis de 8 mm/tour, course 200 mm. Le moteur et
+le TB6600 ont leur propre alimentation. Les constantes sont dans
+`arduino_stepper_i2c_slave.ino`.
+
+## Structure du dépôt
+
+| Élément | Rôle |
 |---|---|
-| SDA (GPIO2, pin 3) | SDA |
-| SCL (GPIO3, pin 5) | SCL |
-| GND | GND (masse commune obligatoire) |
+| `src/api_server.py` | Service FastAPI |
+| `src/common.py`, `identification.py`, `enrollment.py`, `audio_capture.py` | Modèle, identification/adaptation, enrôlement, capture + VAD |
+| `src/gmm_mfcc_identification.py` | Méthode de référence MFCC + GMM |
+| `src/preferences.py`, `actuator_seat.py`, `actuator_backrest.py` | Préférences et ponts I2C |
+| `arduino_stepper_i2c_slave.ino` | Firmware de l'Arduino |
+| `kotlin-app/` | Application Android Automotive |
+| `dataset/`, `models/`, `preferences.json`, `driver_options.json` | Données générées ou saisies |
 
-Adresse I2C de l'Arduino : `0x08`.
+## Limitations
 
-**Arduino → TB6600** (logique actif-bas)
-| TB6600 | Arduino |
-|---|---|
-| PUL+, DIR+, ENA+ | 5V (fixe) |
-| PUL− | D2 |
-| DIR− | D3 |
-| ENA− | D6 |
-
-Le moteur pas-à-pas et le TB6600 ont leur propre alimentation (tension/
-courant moteur), séparée du 5V logique de l'Arduino.
-
-**Arduino → Servo (dossier)**
-| Servo | Arduino / alimentation |
-|---|---|
-| Signal | D9 |
-| V+ | Alimentation 5V dédiée (pas la broche 5V de l'Arduino) |
-| GND | Masse commune avec l'Arduino |
-
-**Arduino → Encodeur KY-040** (monté sur la vis du siège)
-| KY-040 | Arduino |
-|---|---|
-| CLK | D4 |
-| DT | D5 |
-| + | 5V |
-| GND | GND |
-
-### Protocole I2C
-
-Le Pi envoie 2 octets par commande : `[axis, percent]`.
-- `axis = 1` (siège) ou `axis = 2` (dossier)
-- `percent` = 0–100 (pourcentage de course pour le siège, pourcentage
-  d'angle pour le dossier)
-
-L'Arduino convertit ensuite ce pourcentage en position réelle (ticks
-d'encodeur → pas moteur pour le siège, angle direct pour le servo) et pilote
-le déplacement de façon autonome, sans intervention supplémentaire du Pi.
-
-### Fichiers concernés
-
-| Fichier | Rôle |
-|---|---|
-| `arduino_stepper_i2c_slave.ino` | Firmware Arduino : esclave I2C, pilotage du moteur pas-à-pas (TB6600 + encodeur KY-040) et du servo du dossier |
-| `actuator_seat.py` | Pont I2C côté Pi pour l'axe avant/arrière du siège |
-| `actuator_backrest.py` | Pont I2C côté Pi pour l'inclinaison du dossier (conversion degrés ↔ pourcentage) |
-| `preferences.py` | Appelle les deux actionneurs depuis `apply_preferences()` dès qu'un conducteur est identifié |
-
-### Géométrie mécanique (siège)
-
-- Réduction poulie moteur/vis : 1/3
-- Vis à 4 filets, lead réel 8 mm/tour
-- Course totale : 200 mm
-- Moteur piloté au 1/4 de pas (microstepping TB6600)
-- Encodeur KY-040 : 20 ticks/tour de vis
-
-Ces constantes vivent dans `arduino_stepper_i2c_slave.ino` et peuvent être
-ajustées si la mécanique change.
-
-## Structure des préférences (`preferences.json`)
-
-| Catégorie | Champ | Unité | Plage |
-|---|---|---|---|
-| Siège | position avant/arrière | % | 0–100 |
-| | hauteur | % | 0–100 |
-| | inclinaison dossier | degrés | 90–160 |
-| Volant | hauteur | % | 0–100 |
-| | profondeur | % | 0–100 |
-| Rétroviseurs (x3 : gauche, droit, intérieur) | horizontal | degrés | -30 à 30 |
-| | vertical | degrés | -20 à 20 |
-| Climatisation | température | °C | 16–30 |
-| | vitesse ventilation | palier | 1–7 |
-
-Le schéma (`_schema` dans `preferences.json`) définit ces catégories/bornes
-et peut être modifié librement — le code de saisie/validation (terminal et
-API) s'adapte automatiquement.
-
-## Notes techniques
-
-- Seuils d'identification : `ACCEPT_THRESHOLD` = 0.60, `CONFIDENT_THRESHOLD`
-  (déclenche l'adaptation) = 0.75.
-- La qualité des enregistrements (durée, volume, silence) a un impact
-  direct sur la fiabilité — toujours privilégier l'enrôlement automatique
-  au micro plutôt qu'un enregistrement manuel.
-- Dégradation cross-linguale confirmée empiriquement : enrôler un
-  conducteur avec plusieurs langues qu'il utilise réellement rapproche les
-  scores entre langues.
-- L'API valide les préférences reçues avec les mêmes bornes que la saisie
-  interactive en terminal.
-- Supprimer ou renommer un conducteur agit à la fois sur son profil vocal
-  (`enrolled_speakers.pkl`), ses préférences (`preferences.json`), et son
-  dossier d'échantillons audio (`dataset/<nom>/`), pour éviter toute
-  incohérence entre ces trois sources.
-
-## Limitations connues
-
-- **Distinction conducteur / passager** : avec un micro mono unique,
-  impossible de déterminer la position physique du locuteur identifié.
-  Nécessiterait un réseau de microphones (direction of arrival). Piste
-  retenue comme travaux futurs, au même titre que la reconnaissance
-  faciale.
+- **Un seul micro mono** : impossible de distinguer conducteur et passager ; un
+  réseau de microphones serait nécessaire.
 - **Parole simultanée** : pas de séparation de locuteurs.
-- **Application matérielle des préférences** : deux axes sont réellement
-  motorisés (siège avant/arrière, inclinaison du dossier — voir section
-  Matériel plus haut). Les autres axes (hauteur du siège, volant,
-  rétroviseurs, climatisation) restent un affichage simulé côté serveur,
-  en l'attente d'actionneurs supplémentaires.
-- **Conformité Android Automotive officielle** : l'app ne suit pas les
-  templates de la Car App Library (choix délibéré pour ce PFA, voir plus
-  haut) — une vraie distribution sur le Play Store automobile
-  nécessiterait cette adaptation.
+- **Motorisation partielle** : seuls le siège (avant/arrière) et le dossier sont
+  motorisés ; le montage mécanique du dossier et ses butées sont à finaliser,
+  l'encodeur n'est pas encore monté (siège en boucle ouverte) et la chaîne
+  complète voix → actionneurs n'a pas fait l'objet d'un essai de bout en bout.
+  Les autres préférences sont enregistrées et affichées, sans actionneur.
+- **Amélioration automatique** : elle repose sur le score ; une erreur
+  d'identification peut dériver le profil. Elle est donc optionnelle.
+- **Sensibilité à la langue et à la qualité audio** : enrôler avec les langues
+  réellement utilisées ; privilégier l'enrôlement au micro du serveur.
+- **Évaluation limitée** : petit panel, environnement calme, pas d'EER ni de
+  courbe DET.
+- **Sécurité** : pas de détection d'usurpation (enregistrement rejoué) et API en
+  HTTP sans authentification, à réserver à un réseau local.
+- **Application Android uniquement**, non conforme aux modèles de la Car App
+  Library (distribution officielle impossible en l'état) ; la bande de
+  climatisation ne commande pas la climatisation réelle (permission système).
