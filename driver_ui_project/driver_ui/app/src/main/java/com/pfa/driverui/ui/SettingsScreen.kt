@@ -29,6 +29,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,13 +67,28 @@ import com.pfa.driverui.ui.theme.CarTeal
  * drives the 3D car live. [saved] is what the server has. [guard] asks "save changes?" before a leaving action
  * when [working] differs from [saved].
  */
-class SettingsState(val client: ApiClient) {
+class SettingsState(initialHost: String) {
+    /** Server address (host:port) used by the settings; [changeHost] switches it and re-checks the connection. */
+    var host by mutableStateOf(initialHost)
+        private set
+
+    var client: ApiClient = ApiClient(initialHost)
+        private set
+
     var drivers by mutableStateOf<List<String>>(emptyList())
     var selected by mutableStateOf<String?>(null)
     var saved by mutableStateOf(DEFAULT_PREFERENCES)
     var working by mutableStateOf(DEFAULT_PREFERENCES)
     var message by mutableStateOf<String?>(null)
     var pendingLeave by mutableStateOf<(() -> Unit)?>(null)
+
+    /** Options of the selected profile, kept on the server: automatic profile improvement + number of saved samples. */
+    var adapt by mutableStateOf(false)
+        private set
+    var sampleCount by mutableStateOf<Int?>(null)
+        private set
+    var reenrolling by mutableStateOf(false)
+        private set
 
     /** Last known saved preferences per profile (used to restore the identified driver after leaving settings). */
     val cache = mutableMapOf<String, DriverPreferences>()
@@ -87,6 +105,78 @@ class SettingsState(val client: ApiClient) {
         message = null
         pendingLeave = null
         refresh()
+        if (driverName != null) loadOptions(driverName)
+    }
+
+    /** Loads the voice options (automatic improvement, saved samples) of [name]. */
+    fun loadOptions(name: String) {
+        adapt = false
+        sampleCount = null
+        client.fetchOptions(
+            driverName = name,
+            onResult = { a, n ->
+                if (selected == name) { adapt = a; sampleCount = n }
+            },
+            onError = { if (selected == name) message = "Could not load voice options: $it" },
+        )
+    }
+
+    /** Switch "Improve profile automatically": applied on the server at once, no need to press Save. */
+    fun changeAdapt(value: Boolean) {
+        val name = selected ?: return
+        val previous = adapt
+        adapt = value
+        client.setAdapt(
+            driverName = name,
+            adapt = value,
+            onSuccess = {
+                message = if (value) "$name's profile will now improve automatically" else "Automatic improvement turned off for $name"
+            },
+            onError = {
+                if (selected == name) adapt = previous
+                message = "Could not change the option: $it"
+            },
+        )
+    }
+
+    /** Rebuilds the voice profile from the recordings already saved (no new recording). */
+    fun reenrollFromSaved() {
+        val name = selected ?: return
+        if (reenrolling) return
+        reenrolling = true
+        message = "Re-enrolling $name from the saved recordings…"
+        client.reenroll(
+            driverName = name,
+            onSuccess = { n ->
+                reenrolling = false
+                message = "Voice profile of $name rebuilt from $n saved recordings"
+                loadOptions(name)
+            },
+            onError = {
+                reenrolling = false
+                message = "Re-enroll failed: $it"
+            },
+        )
+    }
+
+    /** After "Record again" finished: the old recordings were replaced by the new ones. */
+    fun recordedAgain(name: String, samples: Int) {
+        message = "Voice profile of $name replaced with $samples new recordings"
+        if (selected == name) loadOptions(name)
+    }
+
+    /** Uses [newHost] from now on and tells the driver whether the server answers. */
+    fun changeHost(newHost: String) {
+        host = newHost
+        client = ApiClient(newHost)
+        message = "Server set to $newHost, checking…"
+        client.fetchDrivers(
+            onResult = {
+                drivers = it
+                message = "Server saved: $newHost (connected, ${it.size} profiles)"
+            },
+            onError = { message = "Server saved: $newHost, but it does not answer ($it)" },
+        )
     }
 
     fun refresh() {
@@ -106,6 +196,7 @@ class SettingsState(val client: ApiClient) {
                 saved = prefs
                 working = prefs
                 message = null
+                loadOptions(name)
             },
             onError = { message = "Could not load preferences: $it" },
         )
@@ -150,7 +241,7 @@ class SettingsState(val client: ApiClient) {
             newName = new,
             onSuccess = {
                 cache.remove(old)?.let { cache[new] = it }
-                if (selected == old) selected = new
+                if (selected == old) { selected = new; loadOptions(new) }
                 message = "Renamed to $new"
                 refresh()
             },
@@ -226,13 +317,16 @@ fun UnsavedChangesDialog(state: SettingsState) {
 @Composable
 fun ProfilePanel(
     state: SettingsState,
-    host: String,
     onHostSaved: (String) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val host = state.host
     var adding by remember { mutableStateOf(false) }
+    var recordingAgain by remember { mutableStateOf<String?>(null) }
+    var reenrollTarget by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
     var showServer by remember { mutableStateOf(false) }
@@ -254,7 +348,16 @@ fun ProfilePanel(
             }
             Spacer(Modifier.height(8.dp))
 
-            if (adding) {
+            val again = recordingAgain
+            if (again != null) {
+                EnrollSection(
+                    state = state,
+                    fixedName = again,
+                    onFinished = { recordingAgain = null },
+                    onCancel = { recordingAgain = null },
+                    modifier = Modifier.weight(1f),
+                )
+            } else if (adding) {
                 EnrollSection(
                     state = state,
                     onFinished = { adding = false },
@@ -310,6 +413,12 @@ fun ProfilePanel(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         ) { Text("Delete", maxLines = 1) }
                     }
+                    VoiceOptionsCard(
+                        state = state,
+                        onReenroll = { reenrollTarget = current },
+                        onRecordAgain = { state.guard { recordingAgain = current } },
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
                 }
 
                 OutlinedButton(
@@ -342,8 +451,11 @@ fun ProfilePanel(
                     Button(onClick = {
                         val trimmed = hostText.trim()
                         if (trimmed.isNotBlank()) {
-                            ServerConfig.setHost(context, trimmed)
-                            onHostSaved(trimmed)
+                            ServerConfig.setHost(context, trimmed)   // persisted for the next launch
+                            state.changeHost(trimmed)                // used by the settings right now + connection check
+                            onHostSaved(trimmed)                     // used by the voice identification
+                            focusManager.clearFocus()
+                            showServer = false                       // hide the field and its Save button
                         }
                     }) { Text("Save") }
                 }
@@ -375,6 +487,26 @@ fun ProfilePanel(
         )
     }
 
+    reenrollTarget?.let { name ->
+        AlertDialog(
+            onDismissRequest = { reenrollTarget = null },
+            title = { Text("Re-enroll $name?") },
+            text = {
+                Text(
+                    "The voice profile is rebuilt from the ${state.sampleCount ?: 0} recordings already saved. " +
+                        "Nothing is recorded, and any automatic improvement made so far is discarded.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    reenrollTarget = null
+                    state.reenrollFromSaved()
+                }) { Text("Re-enroll", color = CarTeal) }
+            },
+            dismissButton = { TextButton(onClick = { reenrollTarget = null }) { Text("Cancel") } },
+        )
+    }
+
     deleteTarget?.let { name ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
@@ -388,6 +520,64 @@ fun ProfilePanel(
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
         )
+    }
+}
+
+/** Voice options of the selected profile: automatic improvement switch, re-enroll, record again. */
+@Composable
+private fun VoiceOptionsCard(
+    state: SettingsState,
+    onReenroll: () -> Unit,
+    onRecordAgain: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val samples = state.sampleCount
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = CarSurfaceVariant,
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Voice profile", color = CarTeal, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Improve automatically", color = CarOnDark, fontSize = 14.sp)
+                    Text(
+                        "Learns from very confident identifications",
+                        color = CarOnDark.copy(alpha = 0.6f),
+                        fontSize = 11.sp,
+                    )
+                }
+                Switch(
+                    checked = state.adapt,
+                    onCheckedChange = { state.changeAdapt(it) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = CarTeal, checkedThumbColor = Color(0xFF00201B)),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onReenroll,
+                    enabled = (samples ?: 0) > 0 && !state.reenrolling,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) { Text(if (state.reenrolling) "Working…" else "Re-enroll", maxLines = 1) }
+                OutlinedButton(
+                    onClick = onRecordAgain,
+                    enabled = !state.reenrolling,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) { Text("Record again", maxLines = 1) }
+            }
+            Text(
+                text = when {
+                    samples == null -> "Re-enroll: uses the saved recordings. Record again: replaces them with new ones."
+                    samples == 0 -> "No saved recordings: use Record again."
+                    else -> "$samples saved recordings. Re-enroll uses them; Record again replaces them with new ones."
+                },
+                color = CarOnDark.copy(alpha = 0.6f),
+                fontSize = 11.sp,
+            )
+        }
     }
 }
 
@@ -439,9 +629,11 @@ private fun EnrollSection(
     onFinished: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    fixedName: String? = null,   // set = "Record again" for this existing profile (old recordings are replaced)
 ) {
     val samplesTarget = 5
-    var name by remember { mutableStateOf("") }
+    val replacing = fixedName != null
+    var name by remember { mutableStateOf(fixedName ?: "") }
     var started by remember { mutableStateOf(false) }
     var recorded by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -454,12 +646,13 @@ private fun EnrollSection(
             val socket = state.client.connectEnrollWebSocket(
                 driverName = name,
                 samples = samplesTarget,
+                replace = replacing,
                 onEvent = { event ->
                     when (event) {
                         is EnrollEvent.SampleRecorded -> recorded = event.index
                         is EnrollEvent.Done -> {
                             done = true
-                            state.createdProfile(name)
+                            if (replacing) state.recordedAgain(name, event.samplesTotal) else state.createdProfile(name)
                             onFinished()
                         }
                         is EnrollEvent.Error -> error = event.message
@@ -472,16 +665,28 @@ private fun EnrollSection(
     }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("New profile", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = CarTeal)
+        Text(
+            if (replacing) "Record $name again" else "New profile",
+            fontSize = 18.sp, fontWeight = FontWeight.Medium, color = CarTeal,
+        )
         if (!started) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text("Driver name") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            val clash = name.trim() in state.drivers
+            if (replacing) {
+                Text(
+                    text = "You will record $samplesTarget new samples. $name's saved recordings are replaced only when all " +
+                        "of them are recorded; if you cancel before that, nothing changes.",
+                    color = CarOnDark.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                )
+            } else {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Driver name") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            val clash = !replacing && name.trim() in state.drivers
             if (clash) Text("This name already exists.", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
@@ -493,7 +698,7 @@ private fun EnrollSection(
                     enabled = name.isNotBlank() && !clash && '/' !in name,
                     modifier = Modifier.weight(1.6f),
                     colors = ButtonDefaults.buttonColors(containerColor = CarTeal, contentColor = Color(0xFF00201B)),
-                ) { Text("Start voice enrollment", maxLines = 1) }
+                ) { Text(if (replacing) "Start recording" else "Start voice enrollment", maxLines = 1) }
             }
         } else {
             Text(

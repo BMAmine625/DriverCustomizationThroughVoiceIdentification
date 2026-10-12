@@ -4,6 +4,7 @@ API du système de reconnaissance vocale conducteur
 """
 
 import os
+import json
 import shutil
 import asyncio
 import queue
@@ -12,15 +13,17 @@ import tempfile
 import threading
 import time
 
+from typing import Optional
+
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import soundfile as sf
 
 from common import load_model
 from identification import (
+    CONFIDENT_THRESHOLD,
+    adapt_profile,
     identify,
-    identify_and_adapt,
-    identify_and_adapt_array,
     identify_array,
     load_enrolled,
     save_enrolled,
@@ -42,6 +45,7 @@ MODELS_PATH = os.environ.get("VOICE_ID_MODELS", "../models/enrolled_speakers.pkl
 PRETRAINED_DIR = os.environ.get("VOICE_ID_PRETRAINED", "../pretrained_ecapa")
 PREFERENCES_PATH = os.environ.get("VOICE_ID_PREFERENCES", "../preferences.json")
 DATASET_DIR = os.environ.get("VOICE_ID_DATASET", "../dataset")
+OPTIONS_PATH = os.environ.get("VOICE_ID_OPTIONS", "../models/driver_options.json")
 
 app = FastAPI(
     title="Voice Driver Identification API",
@@ -59,6 +63,89 @@ app.add_middleware(
 classifier = None
 enrolled_speakers = {}
 enrolled_lock = threading.Lock()
+options_lock = threading.Lock()
+
+
+# ======================================================================
+# Options par conducteur (ex. adaptation automatique du profil)
+# ======================================================================
+# Fichier JSON { "<conducteur>": {"adapt": true/false} }. Par défaut, l'adaptation est DÉSACTIVÉE.
+
+def _load_options() -> dict:
+    try:
+        with open(OPTIONS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_options(data: dict) -> None:
+    os.makedirs(os.path.dirname(OPTIONS_PATH) or ".", exist_ok=True)
+    tmp = OPTIONS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, OPTIONS_PATH)
+
+
+def get_adapt_option(driver_name: str) -> bool:
+    with options_lock:
+        return bool(_load_options().get(driver_name, {}).get("adapt", False))
+
+
+def set_adapt_option(driver_name: str, value: bool) -> None:
+    with options_lock:
+        data = _load_options()
+        data.setdefault(driver_name, {})["adapt"] = bool(value)
+        _save_options(data)
+
+
+def delete_options(driver_name: str) -> None:
+    with options_lock:
+        data = _load_options()
+        if data.pop(driver_name, None) is not None:
+            _save_options(data)
+
+
+def rename_options(old_name: str, new_name: str) -> None:
+    with options_lock:
+        data = _load_options()
+        if old_name in data:
+            data[new_name] = data.pop(old_name)
+            _save_options(data)
+
+
+def _speaker_dir(driver_name: str) -> str:
+    """Dossier d'échantillons d'un conducteur ; refuse les noms qui sortiraient de DATASET_DIR."""
+    name = driver_name.strip()
+    if not name or name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:
+        raise HTTPException(status_code=422, detail="Nom de conducteur invalide.")
+    return os.path.join(DATASET_DIR, name)
+
+
+def _count_samples(driver_name: str) -> int:
+    try:
+        folder = _speaker_dir(driver_name)
+        return len([f for f in os.listdir(folder) if f.lower().endswith((".wav", ".flac"))])
+    except (HTTPException, OSError):
+        return 0
+
+
+def _identify_maybe_adapt(embedding_fn, enrolled, adapt_override: Optional[bool]):
+    """
+    Identifie puis, si le profil identifié a l'adaptation activée (ou si [adapt_override] force le
+    comportement pour tous), met à jour son embedding sur une identification très confiante.
+    À appeler sous enrolled_lock. Retourne (speaker, score, scores, adapted).
+    """
+    speaker, score, scores, embedding = embedding_fn()
+    adapted = False
+    if speaker != "INCONNU" and score >= CONFIDENT_THRESHOLD:
+        allowed = adapt_override if adapt_override is not None else get_adapt_option(speaker)
+        if allowed:
+            adapt_profile(enrolled, speaker, embedding)
+            save_enrolled(enrolled, MODELS_PATH)
+            adapted = True
+    return speaker, score, scores, adapted
 
 
 def _stdin_quit_listener() -> None:
@@ -121,8 +208,9 @@ def delete_driver(driver_name: str):
             save_enrolled(enrolled_speakers, MODELS_PATH)
 
     removed_prefs = delete_driver_preferences(driver_name, PREFERENCES_PATH)
+    delete_options(driver_name)
 
-    speaker_dir = os.path.join(DATASET_DIR, driver_name)
+    speaker_dir = _speaker_dir(driver_name)
     if os.path.isdir(speaker_dir):
         shutil.rmtree(speaker_dir)
 
@@ -151,13 +239,56 @@ def rename_driver(old_name: str, new_name: str = Query(...)):
         save_enrolled(enrolled_speakers, MODELS_PATH)
 
     rename_driver_preferences(old_name, new_name, PREFERENCES_PATH)
+    rename_options(old_name, new_name)
 
-    old_dir = os.path.join(DATASET_DIR, old_name)
-    new_dir = os.path.join(DATASET_DIR, new_name)
+    old_dir = _speaker_dir(old_name)
+    new_dir = _speaker_dir(new_name)
     if os.path.isdir(old_dir) and not os.path.exists(new_dir):
         os.rename(old_dir, new_dir)
 
     return {"status": "ok", "old_name": old_name, "new_name": new_name}
+
+
+@app.get("/drivers/{driver_name}/options")
+def get_driver_options(driver_name: str):
+    """Options du conducteur : adaptation automatique du profil + nombre d'échantillons audio conservés."""
+    with enrolled_lock:
+        if driver_name not in enrolled_speakers:
+            raise HTTPException(status_code=404, detail=f"Conducteur '{driver_name}' introuvable.")
+    return {"adapt": get_adapt_option(driver_name), "samples": _count_samples(driver_name)}
+
+
+@app.put("/drivers/{driver_name}/options")
+def set_driver_options(driver_name: str, body: dict):
+    with enrolled_lock:
+        if driver_name not in enrolled_speakers:
+            raise HTTPException(status_code=404, detail=f"Conducteur '{driver_name}' introuvable.")
+    if "adapt" not in body or not isinstance(body["adapt"], bool):
+        raise HTTPException(status_code=422, detail="Champ 'adapt' (booléen) requis.")
+    set_adapt_option(driver_name, body["adapt"])
+    return {"status": "ok", "driver": driver_name, "adapt": body["adapt"]}
+
+
+@app.post("/drivers/{driver_name}/reenroll")
+def reenroll_driver(driver_name: str):
+    """
+    Ré-enrôle un conducteur à partir des échantillons audio DÉJÀ enregistrés (aucun enregistrement) :
+    l'embedding est recalculé depuis le dossier du conducteur, ce qui remplace aussi toute adaptation
+    accumulée.
+    """
+    if classifier is None:
+        raise HTTPException(status_code=503, detail="Modèle non encore chargé, réessayez dans un instant.")
+    speaker_dir = _speaker_dir(driver_name)
+    if _count_samples(driver_name) == 0:
+        raise HTTPException(status_code=409, detail=f"Aucun échantillon audio enregistré pour '{driver_name}'.")
+    with enrolled_lock:
+        result = enroll_one_speaker(classifier, speaker_dir)
+        if result is None:
+            raise HTTPException(status_code=409, detail="Aucun échantillon exploitable.")
+        embedding, n_total = result
+        enrolled_speakers[driver_name] = embedding
+        save_enrolled(enrolled_speakers, MODELS_PATH)
+    return {"status": "ok", "driver": driver_name, "samples_total": n_total}
 
 
 @app.get("/preferences/schema")
@@ -192,7 +323,7 @@ def set_preferences(driver_name: str, body: dict):
 
 
 @app.post("/identify")
-async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)):
+async def identify_file(file: UploadFile = File(...), adapt: Optional[bool] = Query(None)):
     if classifier is None:
         raise HTTPException(status_code=503, detail="Modèle non encore chargé, réessayez dans un instant.")
 
@@ -203,13 +334,9 @@ async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)
 
     try:
         with enrolled_lock:
-            if adapt:
-                speaker, score, scores, adapted = identify_and_adapt(
-                    classifier, tmp_path, enrolled_speakers, save_path=MODELS_PATH
-                )
-            else:
-                speaker, score, scores, _ = identify(classifier, tmp_path, enrolled_speakers)
-                adapted = False
+            speaker, score, scores, adapted = _identify_maybe_adapt(
+                lambda: identify(classifier, tmp_path, enrolled_speakers), enrolled_speakers, adapt
+            )
     finally:
         os.remove(tmp_path)
 
@@ -234,7 +361,7 @@ async def identify_file(file: UploadFile = File(...), adapt: bool = Query(False)
 # ======================================================================
 
 @app.websocket("/ws/identify")
-async def ws_identify(websocket: WebSocket, adapt: bool = Query(False), levels: bool = Query(False)):
+async def ws_identify(websocket: WebSocket, adapt: Optional[bool] = Query(None), levels: bool = Query(False)):
     await websocket.accept()
 
     result_queue = queue.Queue()
@@ -257,13 +384,9 @@ async def ws_identify(websocket: WebSocket, adapt: bool = Query(False), levels: 
                 on_level=on_level if levels else None,
             ):
                 with enrolled_lock:
-                    if adapt:
-                        speaker, score, scores, adapted = identify_and_adapt_array(
-                            classifier, segment, enrolled_speakers, save_path=MODELS_PATH
-                        )
-                    else:
-                        speaker, score, scores, _ = identify_array(classifier, segment, enrolled_speakers)
-                        adapted = False
+                    speaker, score, scores, adapted = _identify_maybe_adapt(
+                        lambda: identify_array(classifier, segment, enrolled_speakers), enrolled_speakers, adapt
+                    )
 
                 preferences = get_preferences(speaker, all_prefs) if speaker != "INCONNU" else None
                 if preferences is not None:
@@ -300,23 +423,50 @@ async def ws_identify(websocket: WebSocket, adapt: bool = Query(False), levels: 
 # ======================================================================
 
 @app.websocket("/ws/enroll")
-async def ws_enroll(websocket: WebSocket, driver_name: str = Query(...), samples: int = Query(5)):
+async def ws_enroll(
+    websocket: WebSocket,
+    driver_name: str = Query(...),
+    samples: int = Query(5),
+    replace: bool = Query(False),
+):
+    """
+    Enrôlement automatique au micro de la machine serveur.
+
+    replace=false : les nouveaux échantillons s'AJOUTENT à ceux déjà enregistrés.
+    replace=true  : les nouveaux échantillons REMPLACENT les anciens. Les anciens fichiers audio ne sont
+                    supprimés qu'une fois TOUS les nouveaux enregistrés et l'enrôlement réussi : si
+                    l'enregistrement est interrompu ou échoue, l'ancien profil est conservé intact.
+    """
     await websocket.accept()
+
+    try:
+        speaker_dir = _speaker_dir(driver_name)
+    except HTTPException as e:
+        await websocket.send_json({"type": "error", "message": e.detail})
+        await websocket.close()
+        return
 
     progress_queue = queue.Queue()
     stop_event = threading.Event()
 
     def worker():
-        speaker_dir = os.path.join(DATASET_DIR, driver_name)
-        os.makedirs(speaker_dir, exist_ok=True)
-        existing = [f for f in os.listdir(speaker_dir) if f.lower().endswith(".wav")]
-        start_index = len(existing)
-        collected = 0
-
+        staging = None
         try:
+            if replace:
+                os.makedirs(DATASET_DIR, exist_ok=True)
+                staging = tempfile.mkdtemp(prefix=".enroll_", dir=DATASET_DIR)
+                target_dir = staging
+                start_index = 0
+            else:
+                os.makedirs(speaker_dir, exist_ok=True)
+                target_dir = speaker_dir
+                existing = [f for f in os.listdir(speaker_dir) if f.lower().endswith(".wav")]
+                start_index = len(existing)
+            collected = 0
+
             for segment in speech_segments(stop_event=stop_event):
                 idx = start_index + collected
-                path = os.path.join(speaker_dir, f"sample_{idx}.wav")
+                path = os.path.join(target_dir, f"sample_{idx}.wav")
                 sf.write(path, segment, SAMPLE_RATE)
                 collected += 1
                 progress_queue.put({
@@ -331,13 +481,25 @@ async def ws_enroll(websocket: WebSocket, driver_name: str = Query(...), samples
             if collected == 0:
                 progress_queue.put({"type": "error", "message": "Aucun échantillon enregistré."})
                 return
+            if replace and collected < samples:
+                progress_queue.put({
+                    "type": "error",
+                    "message": "Enregistrement interrompu, l'ancien profil est conservé.",
+                })
+                return
 
             with enrolled_lock:
-                result = enroll_one_speaker(classifier, speaker_dir)
+                result = enroll_one_speaker(classifier, target_dir)
                 if result is None:
                     progress_queue.put({"type": "error", "message": "Échec de l'enrôlement."})
                     return
                 embedding, n_total = result
+                if replace:
+                    # Tout est prêt : on remplace seulement maintenant les anciens fichiers audio.
+                    if os.path.isdir(speaker_dir):
+                        shutil.rmtree(speaker_dir)
+                    os.rename(staging, speaker_dir)
+                    staging = None
                 enrolled_speakers[driver_name] = embedding
                 save_enrolled(enrolled_speakers, MODELS_PATH)
 
@@ -345,6 +507,9 @@ async def ws_enroll(websocket: WebSocket, driver_name: str = Query(...), samples
 
         except Exception as e:
             progress_queue.put({"type": "error", "message": str(e)})
+        finally:
+            if staging and os.path.isdir(staging):
+                shutil.rmtree(staging, ignore_errors=True)
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()

@@ -78,6 +78,7 @@ fun CarScene(
     blurDp: Float = 0f,
     hotspots: List<CarView> = emptyList(),
     onHotspotTap: (CarView) -> Unit = {},
+    shotOverride: CamShot? = null,   // debug: put the camera exactly here (no animation) instead of following [view]
 ) {
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
@@ -124,10 +125,9 @@ fun CarScene(
             }
         }
 
-        val rig = holder.rig
         val shot = shownShot
-        if (modelReady && rig != null && shot != null && hotspots.isNotEmpty() && boxSize.width > 0 && boxSize.height > 0) {
-            HotspotLayer(views = hotspots, shot = shot, rig = rig, size = boxSize, onTap = onHotspotTap)
+        if (modelReady && shot != null && hotspots.isNotEmpty() && boxSize.width > 0 && boxSize.height > 0) {
+            HotspotLayer(views = hotspots, shot = shot, size = boxSize, onTap = onHotspotTap)
         }
     }
 
@@ -146,11 +146,19 @@ fun CarScene(
         }
     }
 
-    // Camera: cinematic move between shots.
-    LaunchedEffect(modelReady, view) {
+    // Debug: the camera is placed by the caller, frame by frame.
+    LaunchedEffect(modelReady, shotOverride) {
+        val s = shotOverride ?: return@LaunchedEffect
+        if (!modelReady || holder.rig == null) return@LaunchedEffect
+        place(s); shownShot = s
+    }
+
+    // Camera: cinematic move between shots (tuned values from the debug screen override the defaults).
+    LaunchedEffect(modelReady, view, shotOverride == null) {
+        if (shotOverride != null) return@LaunchedEffect
         if (!modelReady || holder.rig == null) return@LaunchedEffect
         val from = shownShot
-        val to = view.shot
+        val to = CarTuning.shot(view)
         if (from == null) {
             place(to); shownShot = to
         } else {
@@ -172,37 +180,16 @@ fun CarScene(
 // Tappable markers over the 3D car
 // ---------------------------------------------------------------------------------------------
 
-private fun dot(a: V3, b: V3) = a.x * b.x + a.y * b.y + a.z * b.z
-private fun cross(a: V3, b: V3) = V3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
-
-/** Pinhole projection of a world point for a camera at [eye] looking at [target] (Y up, vertical fov). Null if behind. */
-private fun projectToScreen(p: V3, eye: V3, target: V3, fovDeg: Float, w: Float, h: Float): Offset? {
-    val f = (target - eye).normalized()
-    val r = cross(f, V3(0f, 1f, 0f)).normalized()
-    val u = cross(r, f)
-    val d = p - eye
-    val z = dot(d, f)
-    if (z <= 1e-4f) return null
-    val tanHalf = tan(fovDeg * PI / 360.0).toFloat()
-    val ndcX = dot(d, r) / (z * tanHalf * (w / h))
-    val ndcY = dot(d, u) / (z * tanHalf)
-    return Offset((ndcX * 0.5f + 0.5f) * w, (0.5f - ndcY * 0.5f) * h)
-}
-
-private fun Position.toV3() = V3(x, y, z)
-
 @Composable
 private fun HotspotLayer(
     views: List<CarView>,
     shot: CamShot,
-    rig: CarRig,
     size: IntSize,
     onTap: (CarView) -> Unit,
 ) {
-    val eye = rig.toWorld(shot.pos).toV3()
-    val target = rig.toWorld(shot.target).toV3()
+    // glTF coordinates are a uniform scale + translation of the world frame, so the projection is the same.
     val points: List<Pair<CarView, Offset>> = views.mapNotNull { v ->
-        projectToScreen(rig.toWorld(v.anchor).toV3(), eye, target, shot.fovDeg, size.width.toFloat(), size.height.toFloat())
+        projectToScreen(CarTuning.anchor(v), shot.pos, shot.target, shot.fovDeg, size.width.toFloat(), size.height.toFloat())
             ?.let { v to it }
     }
     val pulse by rememberInfiniteTransition(label = "hotspotPulse").animateFloat(

@@ -8,12 +8,13 @@ data class CamShot(val pos: V3, val target: V3, val fovDeg: Float)
  * overview. It is only used for the tap markers, tune it if a marker does not sit on its part.
  */
 enum class CarView(val label: String, val shot: CamShot, val anchor: V3) {
-    OVERVIEW("Car", CamShot(V3(0.050f, 0.030f, 0.020f), V3(0.0023f, 0.0040f, -0.0245f), 35f), V3(0.0023f, 0.0040f, -0.0245f)),
-    SEAT("Seat", CamShot(V3(0.0023f, 0.0060f, -0.0200f), V3(0.0068f, 0.0010f, -0.0268f), 65f), V3(0.0068f, 0.0028f, -0.0268f)),
-    WHEEL("Steering wheel", CamShot(V3(0.0010f, 0.0052f, -0.0225f), V3(0.0068f, 0.0027f, -0.0166f), 50f), V3(0.0068f, 0.0027f, -0.0166f)),
-    MIRROR_LEFT("Left mirror", CamShot(V3(0.0165f, 0.0080f, -0.0240f), V3(0.0116f, 0.0061f, -0.0180f), 40f), V3(0.0116f, 0.0061f, -0.0180f)),
-    MIRROR_RIGHT("Right mirror", CamShot(V3(-0.0120f, 0.0080f, -0.0240f), V3(-0.0071f, 0.0061f, -0.0180f), 40f), V3(-0.0071f, 0.0061f, -0.0180f)),
-    MIRROR_INTERIOR("Interior mirror", CamShot(V3(0.0068f, 0.0050f, -0.0250f), V3(0.0023f, 0.0083f, -0.0200f), 45f), V3(0.0023f, 0.0083f, -0.0200f)),
+    // Tuned with the debug screen on 12/10 (camera + marker positions).
+    OVERVIEW("Car", CamShot(V3(0.00249f, 0.00877f, -0.03133f), V3(0.00138f, 0.00038f, -0.01042f), 66f), V3(0.00230f, 0.00400f, -0.02450f)),
+    SEAT("Seat", CamShot(V3(-0.00143f, 0.00832f, -0.02373f), V3(0.00732f, 0.00450f, -0.02309f), 65f), V3(0.00598f, 0.00394f, -0.02734f)),
+    WHEEL("Steering wheel", CamShot(V3(-0.00271f, 0.00691f, -0.02312f), V3(0.00719f, 0.00368f, -0.01852f), 50f), V3(0.00595f, 0.00505f, -0.02051f)),
+    MIRROR_LEFT("Left mirror", CamShot(V3(0.00770f, 0.00748f, -0.02525f), V3(0.00976f, 0.00695f, -0.02053f), 40f), V3(0.01160f, 0.00610f, -0.01800f)),
+    MIRROR_RIGHT("Right mirror", CamShot(V3(0.00417f, 0.00672f, -0.02585f), V3(-0.00051f, 0.00637f, -0.02253f), 40f), V3(-0.00710f, 0.00610f, -0.01800f)),
+    MIRROR_INTERIOR("Interior mirror", CamShot(V3(0.00567f, 0.00769f, -0.02574f), V3(0.00238f, 0.00839f, -0.02070f), 45f), V3(0.00230f, 0.00830f, -0.02000f)),
 }
 
 /** The parts the driver can tap in the settings view (everything except the overview). */

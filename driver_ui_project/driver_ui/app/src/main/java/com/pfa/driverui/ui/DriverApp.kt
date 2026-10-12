@@ -6,7 +6,9 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -42,6 +44,7 @@ import com.pfa.driverui.model.DEFAULT_PREFERENCES
 import com.pfa.driverui.network.ApiClient
 import com.pfa.driverui.network.ServerConfig
 import com.pfa.driverui.scene.CarScene
+import com.pfa.driverui.scene.CarTuning
 import com.pfa.driverui.scene.CarView
 import com.pfa.driverui.scene.EDITABLE_VIEWS
 import com.pfa.driverui.ui.theme.CarGlass
@@ -65,19 +68,24 @@ private fun seg(t: Float, from: Float, to: Float) = ((t - from) / (to - from)).c
  *    taps a part of the car (seat, wheel, mirror): the camera glides to it and its controls appear. Climate is
  *    edited in the band at the bottom. Leaving with unsaved changes asks "save?".
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DriverApp() {
     val context = LocalContext.current
+    remember { CarTuning.load(context) }   // camera shots / marker positions tuned with the Customize view screen
     var host by remember { mutableStateOf(ServerConfig.getHost(context)) }
     var screen by remember { mutableStateOf<AppScreen>(AppScreen.Listening) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var audioLevel by remember { mutableFloatStateOf(0f) }
     var carView by remember { mutableStateOf(CarView.OVERVIEW) }
 
-    val client = remember(host) { ApiClient(host) }
-    val settings = remember(client) { SettingsState(client) }
+    val client = remember(host) { ApiClient(host) }                 // voice identification
+    val settings = remember { SettingsState(ServerConfig.getHost(context)) }   // settings keep their own client
+    val debug = remember { DebugState() }
+    var screenBeforeCustomize by remember { mutableStateOf<AppScreen>(AppScreen.Listening) }   // where "Exit customize view" goes back to
     val isListening = screen is AppScreen.Listening
     val inSettings = screen is AppScreen.Settings
+    val inDebug = screen is AppScreen.Debug
 
     DisposableEffect(host, isListening) {
         val socket = if (isListening) {
@@ -138,6 +146,7 @@ fun DriverApp() {
         is AppScreen.Identified -> s.preferences
         is AppScreen.ShowingPreferences -> s.preferences
         is AppScreen.Settings -> settings.working
+        is AppScreen.Debug -> debug.prefs
         else -> DEFAULT_PREFERENCES
     }
     val blurDp = when (screen) {
@@ -158,7 +167,6 @@ fun DriverApp() {
             Box(modifier = Modifier.width(panelWidth).fillMaxHeight().clipToBounds()) {
                 ProfilePanel(
                     state = settings,
-                    host = host,
                     onHostSaved = { host = it },
                     onClose = { settings.guard { exitSettings() } },
                     modifier = Modifier
@@ -184,6 +192,7 @@ fun DriverApp() {
                 blurDp = blurDp,
                 hotspots = if (showHotspots) EDITABLE_VIEWS else emptyList(),
                 onHotspotTap = { carView = it },
+                shotOverride = if (inDebug) debug.shot else null,
             )
 
             when (val current = screen) {
@@ -206,19 +215,41 @@ fun DriverApp() {
                     carView = carView,
                     onViewChange = { carView = it },
                 )
+                is AppScreen.Debug -> DebugScreen(
+                    debug = debug,
+                    onExit = {
+                        carView = CarView.OVERVIEW
+                        screen = screenBeforeCustomize
+                    },
+                )
             }
 
-            if (!inSettings) {
+            if (!inSettings && !inDebug) {
+                // tap = settings, long-press = Customize view tool (no identification, free camera, movable markers)
                 Surface(
-                    onClick = {
-                        val (driver, prefs) = when (val s = screen) {
-                            is AppScreen.Identified -> s.driverName to s.preferences
-                            is AppScreen.ShowingPreferences -> s.driverName to s.preferences
-                            else -> null to null
-                        }
-                        screen = AppScreen.Settings(driver, prefs)
-                    },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(50))
+                        .combinedClickable(
+                            onClick = {
+                                val (driver, prefs) = when (val s = screen) {
+                                    is AppScreen.Identified -> s.driverName to s.preferences
+                                    is AppScreen.ShowingPreferences -> s.driverName to s.preferences
+                                    else -> null to null
+                                }
+                                screen = AppScreen.Settings(driver, prefs)
+                            },
+                            onLongClick = {
+                                // remember the screen we came from (an "Identified" welcome would replay, so use the settled one)
+                                screenBeforeCustomize = when (val s = screen) {
+                                    is AppScreen.Identified -> AppScreen.ShowingPreferences(s.driverName, s.preferences)
+                                    else -> s
+                                }
+                                debug.reset()
+                                screen = AppScreen.Debug
+                            },
+                        ),
                     color = CarGlass,
                     shape = RoundedCornerShape(50),
                     border = BorderStroke(1.dp, CarOutline.copy(alpha = 0.7f)),
